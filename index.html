@@ -81,6 +81,51 @@ function Spinner({ size = 28 }) {
     />
   );
 }
+function IconTrophy({ size = 20, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+      <path d="M7 4h10v6a5 5 0 0 1-10 0z" />
+      <path d="M7 5H4a2 2 0 0 0 0 4h3" />
+      <path d="M17 5h3a2 2 0 0 1 0 4h-3" />
+    </svg>
+  );
+}
+function IconCopy({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+function IconCheck({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+function IconUsers({ size = 18, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+function IconLogOut({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
 
 /* ---------------------------- SHARED ---------------------------- */
 
@@ -424,6 +469,443 @@ function Games() {
   );
 }
 
+/* ---------------------------- FANTASY LEAGUE ---------------------------- */
+/*
+  There's no server of our own here — this is a static page. To let two
+  different devices share one league, we lean on jsonblob.com, a free
+  public JSON storage API that's built for exactly this (anonymous
+  create/read/write, open to browser JS). The "join code" is literally the
+  ID of the shared record. It's not pretty, but it's honestly the only way
+  to sync data between devices without asking you to set up your own
+  backend. Note: jsonblob auto-deletes a league if nobody opens it for 75
+  days straight.
+*/
+
+const JSONBLOB_BASE = "https://jsonblob.com/api/jsonBlob";
+const LS_KEY = "rnfl_fantasy_membership";
+
+function uid() {
+  return window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function readMembership() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function writeMembership(obj) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(obj));
+  } catch {}
+}
+function clearMembership() {
+  try {
+    localStorage.removeItem(LS_KEY);
+  } catch {}
+}
+function formatCode(id) {
+  return (id.match(/.{1,4}/g) || [id]).join("-").toUpperCase();
+}
+function normalizeCode(input) {
+  return input.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+}
+
+async function apiCreateLeague(payload) {
+  const res = await fetch(JSONBLOB_BASE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("create failed");
+  const location = res.headers.get("Location");
+  if (!location) throw new Error("no id returned");
+  const id = location.split("/").pop();
+  return { id, data: payload };
+}
+async function apiGetLeague(id) {
+  const res = await fetch(`${JSONBLOB_BASE}/${id}`, { headers: { Accept: "application/json" } });
+  if (res.status === 404) throw new Error("not found");
+  if (!res.ok) throw new Error("fetch failed");
+  return res.json();
+}
+async function apiSaveLeague(id, payload) {
+  const res = await fetch(`${JSONBLOB_BASE}/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("save failed");
+  return res.json();
+}
+
+function LandingChoice({ onPickCreate, onPickJoin }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-8 gap-4 text-center">
+      <IconTrophy size={40} color="#F2A93B" />
+      <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Fantasy League</h2>
+      <p className="font-[Inter] text-sm text-[#6b7482] max-w-xs">
+        Start a league on this device and share the code, or join a league someone already started.
+      </p>
+      <div className="w-full max-w-xs flex flex-col gap-3 mt-2">
+        <button onClick={onPickCreate} className="w-full py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform">
+          Create a League
+        </button>
+        <button onClick={onPickJoin} className="w-full py-3 rounded-xl bg-[#1c2129] text-[#e8ecf1] font-[Inter] text-sm font-medium tracking-wide active:scale-[0.98] transition-transform">
+          Join a League
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CreateLeagueForm({ onBack, onCreated }) {
+  const [leagueName, setLeagueName] = useState("");
+  const [yourName, setYourName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!leagueName.trim() || !yourName.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const memberId = uid();
+      const payload = {
+        name: leagueName.trim().slice(0, 40),
+        createdAt: Date.now(),
+        members: [{ id: memberId, name: yourName.trim().slice(0, 24), points: 0, joinedAt: Date.now() }],
+      };
+      const { id, data } = await apiCreateLeague(payload);
+      writeMembership({ leagueId: id, memberId, memberName: payload.members[0].name });
+      onCreated({ id, data });
+    } catch {
+      setError("Couldn't create the league. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-4 pt-5 pb-3">
+        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
+          <IconChevronLeft size={22} />
+        </button>
+        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">New League</span>
+      </div>
+      <div className="flex-1 px-6 pt-4 flex flex-col gap-4">
+        <div>
+          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">League name</label>
+          <input
+            value={leagueName}
+            onChange={(e) => setLeagueName(e.target.value)}
+            placeholder="e.g. Sunday Sweats"
+            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[Inter] text-sm text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
+          />
+        </div>
+        <div>
+          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">Your name</label>
+          <input
+            value={yourName}
+            onChange={(e) => setYourName(e.target.value)}
+            placeholder="e.g. Jordan"
+            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[Inter] text-sm text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
+          />
+        </div>
+        {error && <div className="font-[Inter] text-xs text-[#FF3D2E]">{error}</div>}
+        <button
+          onClick={submit}
+          disabled={busy || !leagueName.trim() || !yourName.trim()}
+          className="mt-2 w-full py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide disabled:opacity-40 active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
+        >
+          {busy ? <Spinner size={16} /> : null}
+          {busy ? "Creating…" : "Create League"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function JoinLeagueForm({ onBack, onJoined }) {
+  const [code, setCode] = useState("");
+  const [yourName, setYourName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    const id = normalizeCode(code);
+    if (!id || !yourName.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const data = await apiGetLeague(id);
+      const memberId = uid();
+      const member = { id: memberId, name: yourName.trim().slice(0, 24), points: 0, joinedAt: Date.now() };
+      const updated = { ...data, members: [...(data.members ?? []), member] };
+      await apiSaveLeague(id, updated);
+      writeMembership({ leagueId: id, memberId, memberName: member.name });
+      onJoined({ id, data: updated });
+    } catch (e) {
+      if (e.message === "not found") {
+        setError("That code doesn't match a league. Double-check and try again.");
+      } else {
+        setError("Couldn't reach the league service. Check your connection and try again.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-4 pt-5 pb-3">
+        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
+          <IconChevronLeft size={22} />
+        </button>
+        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">Join League</span>
+      </div>
+      <div className="flex-1 px-6 pt-4 flex flex-col gap-4">
+        <div>
+          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">Join code</label>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="e.g. 5226-5717-3004-3f8b"
+            autoCapitalize="none"
+            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[JetBrains_Mono] text-sm tracking-wider text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
+          />
+        </div>
+        <div>
+          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">Your name</label>
+          <input
+            value={yourName}
+            onChange={(e) => setYourName(e.target.value)}
+            placeholder="e.g. Jordan"
+            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[Inter] text-sm text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
+          />
+        </div>
+        {error && <div className="font-[Inter] text-xs text-[#FF3D2E]">{error}</div>}
+        <button
+          onClick={submit}
+          disabled={busy || !code.trim() || !yourName.trim()}
+          className="mt-2 w-full py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide disabled:opacity-40 active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
+        >
+          {busy ? <Spinner size={16} /> : null}
+          {busy ? "Joining…" : "Join League"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LeagueDashboard({ membership, onLeave }) {
+  const [status, setStatus] = useState("loading");
+  const [league, setLeague] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [pointsDraft, setPointsDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+
+  const load = useCallback(
+    (silent) => {
+      if (!silent) setStatus("loading");
+      apiGetLeague(membership.leagueId)
+        .then((data) => {
+          setLeague(data);
+          setStatus("ok");
+          const me = (data.members ?? []).find((m) => m.id === membership.memberId);
+          setPointsDraft(me ? String(me.points ?? 0) : "0");
+        })
+        .catch(() => {
+          if (!silent) setStatus("error");
+        });
+    },
+    [membership.leagueId, membership.memberId]
+  );
+
+  useEffect(() => {
+    load(false);
+    const id = setInterval(() => load(true), 45000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const copyCode = async () => {
+    const formatted = formatCode(membership.leagueId);
+    try {
+      await navigator.clipboard.writeText(formatted);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {}
+  };
+
+  const share = async () => {
+    const formatted = formatCode(membership.leagueId);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: league?.name ?? "Fantasy League", text: `Join my fantasy league "${league?.name ?? ""}" — code: ${formatted}` });
+      } catch {}
+    } else {
+      copyCode();
+    }
+  };
+
+  const savePoints = async () => {
+    if (!league) return;
+    const val = Math.max(0, Math.min(9999, Number(pointsDraft) || 0));
+    setSaving(true);
+    try {
+      const updatedMembers = (league.members ?? []).map((m) => (m.id === membership.memberId ? { ...m, points: val } : m));
+      const updated = { ...league, members: updatedMembers };
+      await apiSaveLeague(membership.leagueId, updated);
+      setLeague(updated);
+    } catch {
+      // silently ignore; next auto-refresh will resync
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (status === "loading") {
+    return (
+      <div className="flex flex-col h-full">
+        <LoadingBlock label="Loading your league…" />
+      </div>
+    );
+  }
+  if (status === "error") {
+    return (
+      <div className="flex flex-col h-full">
+        <ErrorBlock label="Couldn't reach the league service." onRetry={() => load(false)} />
+      </div>
+    );
+  }
+
+  const members = [...(league.members ?? [])].sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto px-5 pt-6 pb-8">
+        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">{league.name}</h2>
+        <div className="mt-1 font-[Inter] text-xs text-[#6b7482] flex items-center gap-1.5">
+          <IconUsers size={13} /> {members.length} member{members.length === 1 ? "" : "s"}
+        </div>
+
+        <div className="mt-5 rounded-xl bg-[#14181d] p-4">
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Join Code</div>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 font-[JetBrains_Mono] text-base text-[#F2A93B] tracking-wider break-all">{formatCode(membership.leagueId)}</div>
+            <button onClick={copyCode} className="shrink-0 p-2 rounded-lg bg-[#1c2129] text-[#c3c9d2] active:scale-95 transition-transform">
+              {copied ? <IconCheck size={16} color="#F2A93B" /> : <IconCopy size={16} />}
+            </button>
+            {!!navigator.share && (
+              <button onClick={share} className="shrink-0 px-3 py-2 rounded-lg bg-[#1c2129] text-[#c3c9d2] font-[Inter] text-xs font-medium active:scale-95 transition-transform">
+                Share
+              </button>
+            )}
+          </div>
+          <div className="mt-2 font-[Inter] text-[11px] text-[#4c5563]">Share this so others can join from any device.</div>
+        </div>
+
+        <div className="mt-6 rounded-xl bg-[#14181d] p-4">
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Your Points</div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              value={pointsDraft}
+              onChange={(e) => setPointsDraft(e.target.value)}
+              className="w-24 bg-[#1c2129] rounded-lg px-3 py-2 font-[JetBrains_Mono] text-sm text-[#e8ecf1] outline-none focus:ring-1 focus:ring-[#F2A93B]"
+            />
+            <button
+              onClick={savePoints}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg bg-[#F2A93B] text-[#12151b] font-[Inter] text-xs font-semibold disabled:opacity-40 active:scale-95 transition-transform"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Leaderboard</div>
+          <div className="rounded-xl overflow-hidden bg-[#14181d]">
+            {members.map((m, i) => (
+              <div
+                key={m.id}
+                className={`flex items-center gap-3 px-3.5 py-3 ${i !== members.length - 1 ? "border-b border-[#1a1f26]" : ""}`}
+              >
+                <span className="font-[Teko] text-lg text-[#4c5563] w-5 text-center">{i + 1}</span>
+                <span className="font-[Inter] text-sm text-[#e8ecf1] flex-1 truncate">
+                  {m.name}
+                  {m.id === membership.memberId ? <span className="text-[#F2A93B]"> (you)</span> : null}
+                </span>
+                <span className="font-[JetBrains_Mono] text-sm text-[#c3c9d2]">{m.points ?? 0}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-8">
+          {!confirmingLeave ? (
+            <button
+              onClick={() => setConfirmingLeave(true)}
+              className="w-full py-3 rounded-xl bg-[#1c2129] text-[#8b93a1] font-[Inter] text-sm font-medium tracking-wide flex items-center justify-center gap-2"
+            >
+              <IconLogOut size={15} /> Leave League
+            </button>
+          ) : (
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmingLeave(false)} className="flex-1 py-3 rounded-xl bg-[#1c2129] text-[#c3c9d2] font-[Inter] text-sm font-medium">
+                Cancel
+              </button>
+              <button onClick={onLeave} className="flex-1 py-3 rounded-xl bg-[#FF3D2E] text-[#12151b] font-[Inter] text-sm font-semibold">
+                Confirm Leave
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Fantasy() {
+  const [membership, setMembership] = useState(() => readMembership());
+  const [screen, setScreen] = useState("landing"); // landing | create | join
+
+  if (membership) {
+    return (
+      <LeagueDashboard
+        membership={membership}
+        onLeave={() => {
+          clearMembership();
+          setMembership(null);
+          setScreen("landing");
+        }}
+      />
+    );
+  }
+
+  if (screen === "create") {
+    return (
+      <CreateLeagueForm
+        onBack={() => setScreen("landing")}
+        onCreated={() => setMembership(readMembership())}
+      />
+    );
+  }
+  if (screen === "join") {
+    return (
+      <JoinLeagueForm
+        onBack={() => setScreen("landing")}
+        onJoined={() => setMembership(readMembership())}
+      />
+    );
+  }
+  return <LandingChoice onPickCreate={() => setScreen("create")} onPickJoin={() => setScreen("join")} />;
+}
+
 /* ---------------------------- APP SHELL ---------------------------- */
 
 function App() {
@@ -442,12 +924,14 @@ function App() {
       <div className="flex-1 min-h-0">
         {tab === "home" && <Home />}
         {tab === "games" && <Games />}
+        {tab === "fantasy" && <Fantasy />}
       </div>
 
       <div className="flex items-stretch border-t border-[#1a1f26] bg-[#0d0f13]">
         {[
           { key: "home", label: "Home", Icon: IconHome },
           { key: "games", label: "Games", Icon: IconCalendar },
+          { key: "fantasy", label: "Fantasy League", Icon: IconTrophy },
         ].map(({ key, label, Icon }) => (
           <button key={key} onClick={() => setTab(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5">
             <Icon size={20} color={tab === key ? "#F2A93B" : "#5a6472"} />
