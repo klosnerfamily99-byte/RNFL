@@ -514,7 +514,7 @@ function normalizeCode(input) {
 async function apiCreateLeague(payload) {
   const bucketRes = await fetch(KVDB_ROOT, {
     method: "POST",
-    body: new URLSearchParams({ email: "" }),
+    body: new URLSearchParams({ email: "rnfl-league@example.com" }),
   });
   if (!bucketRes.ok) {
     let detail = "";
