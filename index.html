@@ -28,17 +28,6 @@ const { useState, useEffect, useCallback, useRef, Fragment } = React;
 
 const BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
 
-const DIVISIONS = {
-  "AFC East": ["BUF", "MIA", "NE", "NYJ"],
-  "AFC North": ["BAL", "CIN", "CLE", "PIT"],
-  "AFC South": ["HOU", "IND", "JAX", "TEN"],
-  "AFC West": ["DEN", "KC", "LV", "LAC"],
-  "NFC East": ["DAL", "NYG", "PHI", "WSH"],
-  "NFC North": ["CHI", "DET", "GB", "MIN"],
-  "NFC South": ["ATL", "CAR", "NO", "TB"],
-  "NFC West": ["ARI", "LAR", "SF", "SEA"],
-};
-
 function fmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -65,16 +54,6 @@ function IconCalendar({ size = 20, color = "currentColor" }) {
       <line x1="16" y1="2" x2="16" y2="6" />
       <line x1="8" y1="2" x2="8" y2="6" />
       <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  );
-}
-function IconUsers({ size = 20, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   );
 }
@@ -117,19 +96,6 @@ function Logo({ src, alt, size = 36 }) {
   return <img src={src} alt={alt} onError={() => setBroken(true)} style={{ width: size, height: size }} className="object-contain shrink-0" />;
 }
 
-function Headshot({ src, alt, name }) {
-  const [broken, setBroken] = useState(false);
-  const initials = (name || "?").split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  if (!src || broken) {
-    return (
-      <div className="w-full aspect-square rounded-lg bg-[#1c2129] flex items-center justify-center text-[#5a6472] font-[Teko] text-3xl tracking-wide">
-        {initials || "?"}
-      </div>
-    );
-  }
-  return <img src={src} alt={alt} onError={() => setBroken(true)} className="w-full aspect-square rounded-lg object-cover bg-[#1c2129]" />;
-}
-
 function LoadingBlock({ label }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-[#6b7482]">
@@ -155,8 +121,58 @@ function ErrorBlock({ label, onRetry }) {
 
 /* ---------------------------- HOME ---------------------------- */
 
-function Home({ onJumpToGames, onJumpToTeams }) {
+function timeAgo(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+function NewsCard({ article }) {
+  const img = article.images?.[0]?.url;
+  const href = article.links?.web?.href;
+  const [broken, setBroken] = useState(false);
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex gap-3 py-3 border-b border-[#1a1f26] last:border-0 active:opacity-70 transition-opacity"
+    >
+      {img && !broken ? (
+        <img
+          src={img}
+          alt=""
+          onError={() => setBroken(true)}
+          className="w-24 h-16 rounded-lg object-cover shrink-0 bg-[#1c2129]"
+        />
+      ) : (
+        <div className="w-24 h-16 rounded-lg bg-[#1c2129] shrink-0 flex items-center justify-center text-[#4c5563]">
+          <IconWarning size={18} />
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div
+          className="font-[Inter] text-sm font-medium text-[#e8ecf1] leading-snug overflow-hidden"
+          style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+        >
+          {article.headline}
+        </div>
+        <div className="mt-1 font-[JetBrains_Mono] text-[10px] text-[#6b7482] uppercase tracking-widest">
+          {article.byline ? `${article.byline} • ` : ""}
+          {timeAgo(article.published)}
+        </div>
+      </div>
+    </a>
+  );
+}
+
+function Home({ onJumpToGames }) {
   const [state, setState] = useState({ status: "loading", week: null, events: [] });
+  const [news, setNews] = useState({ status: "loading", articles: [] });
 
   const load = useCallback(() => {
     setState({ status: "loading", week: null, events: [] });
@@ -168,7 +184,19 @@ function Home({ onJumpToGames, onJumpToTeams }) {
       .catch(() => setState({ status: "error", week: null, events: [] }));
   }, []);
 
+  const loadNews = useCallback(() => {
+    setNews({ status: "loading", articles: [] });
+    fetch(`${BASE}/news?limit=25`)
+      .then((r) => {
+        if (!r.ok) throw new Error("bad response");
+        return r.json();
+      })
+      .then((d) => setNews({ status: "ok", articles: d?.articles ?? [] }))
+      .catch(() => setNews({ status: "error", articles: [] }));
+  }, []);
+
   useEffect(() => load(), [load]);
+  useEffect(() => loadNews(), [loadNews]);
 
   const live = state.events.filter((e) => e.status?.type?.state === "in");
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
@@ -193,57 +221,65 @@ function Home({ onJumpToGames, onJumpToTeams }) {
         </div>
       )}
 
-      <div className="px-5 pt-6 pb-4">
-        <div className="text-[#6b7482] font-[Inter] text-xs uppercase tracking-[0.2em] mb-1">{today}</div>
-        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Week {state.week ?? "—"}</h2>
-      </div>
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-5 pt-6 pb-3">
+          <div className="text-[#6b7482] font-[Inter] text-xs uppercase tracking-[0.2em] mb-1">{today}</div>
+          <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Week {state.week ?? "—"}</h2>
+        </div>
 
-      <div className="flex-1 overflow-y-auto px-5 pb-6">
-        {state.status === "loading" && <LoadingBlock label="Loading today's slate…" />}
-        {state.status === "error" && <ErrorBlock label="Couldn't reach the scoreboard." onRetry={load} />}
-        {state.status === "ok" && state.events.length === 0 && (
-          <div className="text-[#6b7482] font-[Inter] text-sm py-10 text-center">No games logged for this week yet.</div>
-        )}
-        {state.status === "ok" &&
-          state.events.slice(0, 6).map((e) => {
-            const c = e.competitions?.[0]?.competitors ?? [];
-            const away = c.find((x) => x.homeAway === "away");
-            const home = c.find((x) => x.homeAway === "home");
-            const isLive = e.status?.type?.state === "in";
-            const isFinal = e.status?.type?.completed;
-            return (
-              <div key={e.id} className="flex items-center justify-between py-3 border-b border-[#1a1f26] last:border-0">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <Logo src={away?.team?.logo} alt={away?.team?.abbreviation} size={26} />
-                  <span className="font-[Inter] text-sm text-[#c3c9d2] truncate">{away?.team?.abbreviation}</span>
-                  <span className="font-[Teko] text-lg text-[#e8ecf1] w-6 text-center">{away?.score ?? 0}</span>
+        <div className="px-5">
+          {state.status === "loading" && <LoadingBlock label="Loading today's slate…" />}
+          {state.status === "error" && <ErrorBlock label="Couldn't reach the scoreboard." onRetry={load} />}
+          {state.status === "ok" &&
+            state.events.slice(0, 4).map((e) => {
+              const c = e.competitions?.[0]?.competitors ?? [];
+              const away = c.find((x) => x.homeAway === "away");
+              const home = c.find((x) => x.homeAway === "home");
+              const isLive = e.status?.type?.state === "in";
+              const isFinal = e.status?.type?.completed;
+              return (
+                <div key={e.id} className="flex items-center justify-between py-2.5 border-b border-[#1a1f26] last:border-0">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <Logo src={away?.team?.logo} alt={away?.team?.abbreviation} size={24} />
+                    <span className="font-[Inter] text-sm text-[#c3c9d2] truncate">{away?.team?.abbreviation}</span>
+                    <span className="font-[Teko] text-lg text-[#e8ecf1] w-6 text-center">{away?.score ?? 0}</span>
+                  </div>
+                  <div className="flex flex-col items-center px-3">
+                    {isLive ? (
+                      <span className="text-[10px] font-[Inter] font-semibold text-[#FF3D2E] tracking-widest">LIVE</span>
+                    ) : isFinal ? (
+                      <span className="text-[10px] font-[Inter] text-[#6b7482] tracking-widest">FINAL</span>
+                    ) : (
+                      <span className="text-[10px] font-[Inter] text-[#6b7482] tracking-widest">{fmtTime(e.date)}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+                    <span className="font-[Teko] text-lg text-[#e8ecf1] w-6 text-center">{home?.score ?? 0}</span>
+                    <span className="font-[Inter] text-sm text-[#c3c9d2] truncate">{home?.team?.abbreviation}</span>
+                    <Logo src={home?.team?.logo} alt={home?.team?.abbreviation} size={24} />
+                  </div>
                 </div>
-                <div className="flex flex-col items-center px-3">
-                  {isLive ? (
-                    <span className="text-[10px] font-[Inter] font-semibold text-[#FF3D2E] tracking-widest">LIVE</span>
-                  ) : isFinal ? (
-                    <span className="text-[10px] font-[Inter] text-[#6b7482] tracking-widest">FINAL</span>
-                  ) : (
-                    <span className="text-[10px] font-[Inter] text-[#6b7482] tracking-widest">{fmtTime(e.date)}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
-                  <span className="font-[Teko] text-lg text-[#e8ecf1] w-6 text-center">{home?.score ?? 0}</span>
-                  <span className="font-[Inter] text-sm text-[#c3c9d2] truncate">{home?.team?.abbreviation}</span>
-                  <Logo src={home?.team?.logo} alt={home?.team?.abbreviation} size={26} />
-                </div>
-              </div>
-            );
-          })}
-      </div>
+              );
+            })}
+        </div>
 
-      <div className="px-5 pb-6 flex gap-3">
-        <button onClick={onJumpToGames} className="flex-1 py-3 rounded-xl bg-[#1c2129] text-[#e8ecf1] font-[Inter] text-sm font-medium tracking-wide active:scale-[0.98] transition-transform">
-          Full schedule
-        </button>
-        <button onClick={onJumpToTeams} className="flex-1 py-3 rounded-xl bg-[#1c2129] text-[#e8ecf1] font-[Inter] text-sm font-medium tracking-wide active:scale-[0.98] transition-transform">
-          Teams
-        </button>
+        <div className="px-5 pt-4 pb-2">
+          <button onClick={onJumpToGames} className="w-full py-3 rounded-xl bg-[#1c2129] text-[#e8ecf1] font-[Inter] text-sm font-medium tracking-wide active:scale-[0.98] transition-transform">
+            Full schedule
+          </button>
+        </div>
+
+        <div className="px-5 pt-6 pb-2">
+          <h3 className="font-[Teko] text-2xl text-[#e8ecf1] leading-none tracking-wide">League News</h3>
+        </div>
+        <div className="px-5 pb-8">
+          {news.status === "loading" && <LoadingBlock label="Loading headlines…" />}
+          {news.status === "error" && <ErrorBlock label="Couldn't load the news feed." onRetry={loadNews} />}
+          {news.status === "ok" && news.articles.length === 0 && (
+            <div className="text-[#6b7482] font-[Inter] text-sm py-10 text-center">No headlines right now.</div>
+          )}
+          {news.status === "ok" && news.articles.map((a) => <NewsCard key={a.id} article={a} />)}
+        </div>
       </div>
     </div>
   );
@@ -418,124 +454,6 @@ function Games() {
   );
 }
 
-/* ---------------------------- TEAMS ---------------------------- */
-
-function Roster({ team, onBack }) {
-  const [status, setStatus] = useState("loading");
-  const [groups, setGroups] = useState([]);
-
-  const load = useCallback(() => {
-    setStatus("loading");
-    fetch(`${BASE}/teams/${team.id}/roster`)
-      .then((r) => r.json())
-      .then((d) => {
-        setGroups(d?.athletes ?? []);
-        setStatus("ok");
-      })
-      .catch(() => setStatus("error"));
-  }, [team.id]);
-
-  useEffect(() => load(), [load]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 pt-5 pb-4">
-        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
-          <IconChevronLeft size={22} />
-        </button>
-        <Logo src={team.logo} alt={team.displayName} size={30} />
-        <h2 className="font-[Teko] text-3xl text-[#e8ecf1] leading-none">{team.displayName}</h2>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-5 pb-8">
-        {status === "loading" && <LoadingBlock label="Loading roster…" />}
-        {status === "error" && <ErrorBlock label="Couldn't load this roster." onRetry={load} />}
-        {status === "ok" &&
-          groups.map((g) => (
-            <div key={g.position} className="mb-6">
-              <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-3">{g.position}</div>
-              <div className="grid grid-cols-3 gap-3">
-                {(g.items ?? []).map((p) => (
-                  <div key={p.id} className="flex flex-col gap-1.5">
-                    <Headshot src={p.headshot?.href} alt={p.fullName} name={p.fullName} />
-                    <span className="font-[Inter] text-xs text-[#e8ecf1] leading-tight truncate">{p.fullName}</span>
-                    <span className="font-[JetBrains_Mono] text-[10px] text-[#6b7482]">
-                      {p.jersey ? `#${p.jersey}` : "—"} {p.position?.abbreviation ?? ""}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-}
-
-function Teams() {
-  const [status, setStatus] = useState("loading");
-  const [teams, setTeams] = useState([]);
-  const [selected, setSelected] = useState(null);
-
-  const load = useCallback(() => {
-    setStatus("loading");
-    fetch(`${BASE}/teams?limit=32`)
-      .then((r) => {
-        if (!r.ok) throw new Error("bad response");
-        return r.json();
-      })
-      .then((d) => {
-        const list = (d?.sports?.[0]?.leagues?.[0]?.teams ?? []).map((t) => t.team);
-        if (list.length === 0) throw new Error("empty list");
-        setTeams(list);
-        setStatus("ok");
-      })
-      .catch(() => setStatus("error"));
-  }, []);
-
-  useEffect(() => load(), [load]);
-
-  if (selected) return <Roster team={selected} onBack={() => setSelected(null)} />;
-
-  const byAbbr = Object.fromEntries(teams.map((t) => [t.abbreviation, t]));
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="px-5 pt-6 pb-3">
-        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Teams</h2>
-      </div>
-      <div className="flex-1 overflow-y-auto px-5 pb-6">
-        {status === "loading" && <LoadingBlock label="Loading teams…" />}
-        {status === "error" && <ErrorBlock label="Couldn't load the league." onRetry={load} />}
-        {status === "ok" &&
-          Object.entries(DIVISIONS).map(([div, abbrs]) => (
-            <div key={div} className="mb-5">
-              <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">{div}</div>
-              <div className="rounded-xl overflow-hidden bg-[#14181d]">
-                {abbrs.map((ab, i) => {
-                  const t = byAbbr[ab];
-                  if (!t) return null;
-                  return (
-                    <button
-                      key={ab}
-                      onClick={() => setSelected(t)}
-                      className={`w-full flex items-center gap-3 px-3.5 py-3 text-left active:bg-[#1c2129] transition-colors ${
-                        i !== abbrs.length - 1 ? "border-b border-[#1a1f26]" : ""
-                      }`}
-                    >
-                      <Logo src={t.logos?.[0]?.href} alt={t.displayName} size={30} />
-                      <span className="font-[Inter] text-sm text-[#e8ecf1] flex-1 truncate">{t.displayName}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-}
-
 /* ---------------------------- APP SHELL ---------------------------- */
 
 function App() {
@@ -552,16 +470,14 @@ function App() {
       </div>
 
       <div className="flex-1 min-h-0">
-        {tab === "home" && <Home onJumpToGames={() => setTab("games")} onJumpToTeams={() => setTab("teams")} />}
+        {tab === "home" && <Home onJumpToGames={() => setTab("games")} />}
         {tab === "games" && <Games />}
-        {tab === "teams" && <Teams />}
       </div>
 
       <div className="flex items-stretch border-t border-[#1a1f26] bg-[#0d0f13]">
         {[
           { key: "home", label: "Home", Icon: IconHome },
           { key: "games", label: "Games", Icon: IconCalendar },
-          { key: "teams", label: "Teams/Players", Icon: IconUsers },
         ].map(({ key, label, Icon }) => (
           <button key={key} onClick={() => setTab(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5">
             <Icon size={20} color={tab === key ? "#F2A93B" : "#5a6472"} />
