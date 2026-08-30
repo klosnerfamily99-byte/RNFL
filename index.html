@@ -472,16 +472,15 @@ function Games() {
 /* ---------------------------- FANTASY LEAGUE ---------------------------- */
 /*
   There's no server of our own here — this is a static page. To let two
-  different devices share one league, we lean on jsonblob.com, a free
-  public JSON storage API that's built for exactly this (anonymous
-  create/read/write, open to browser JS). The "join code" is literally the
-  ID of the shared record. It's not pretty, but it's honestly the only way
-  to sync data between devices without asking you to set up your own
-  backend. Note: jsonblob auto-deletes a league if nobody opens it for 75
-  days straight.
+  different devices share one league, we lean on kvdb.io, a free public
+  key-value storage API built for exactly this (anonymous create/read/write,
+  designed to be called directly from browser JS). Each league gets its own
+  "bucket"; the bucket ID doubles as the join code. It's not the prettiest
+  code, but it's the only way to sync data between devices without asking
+  you to stand up your own backend.
 */
 
-const JSONBLOB_BASE = "https://jsonblob.com/api/jsonBlob";
+const KVDB_ROOT = "https://kvdb.io";
 const LS_KEY = "rnfl_fantasy_membership";
 
 function uid() {
@@ -506,38 +505,47 @@ function clearMembership() {
   } catch {}
 }
 function formatCode(id) {
-  return (id.match(/.{1,4}/g) || [id]).join("-").toUpperCase();
+  return (id.match(/.{1,4}/g) || [id]).join("-");
 }
 function normalizeCode(input) {
-  return input.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  return input.replace(/[\s-]/g, "");
 }
 
 async function apiCreateLeague(payload) {
-  const res = await fetch(JSONBLOB_BASE, {
+  const bucketRes = await fetch(KVDB_ROOT, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: new URLSearchParams({ email: "", default_ttl: "0" }),
+  });
+  if (!bucketRes.ok) throw new Error(`couldn't set up storage (${bucketRes.status})`);
+  const bucketId = (await bucketRes.text()).trim();
+  if (!bucketId || bucketId.length > 64) throw new Error("unexpected response");
+  const setRes = await fetch(`${KVDB_ROOT}/${bucketId}/data`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error("create failed");
-  const location = res.headers.get("Location");
-  if (!location) throw new Error("no id returned");
-  const id = location.split("/").pop();
-  return { id, data: payload };
+  if (!setRes.ok) throw new Error(`couldn't save (${setRes.status})`);
+  return { id: bucketId, data: payload };
 }
 async function apiGetLeague(id) {
-  const res = await fetch(`${JSONBLOB_BASE}/${id}`, { headers: { Accept: "application/json" } });
+  const res = await fetch(`${KVDB_ROOT}/${id}/data`);
   if (res.status === 404) throw new Error("not found");
-  if (!res.ok) throw new Error("fetch failed");
-  return res.json();
+  if (!res.ok) throw new Error(`couldn't load (${res.status})`);
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("bad data");
+  }
 }
 async function apiSaveLeague(id, payload) {
-  const res = await fetch(`${JSONBLOB_BASE}/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+  const res = await fetch(`${KVDB_ROOT}/${id}/data`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error("save failed");
-  return res.json();
+  if (!res.ok) throw new Error(`couldn't save (${res.status})`);
+  return payload;
 }
 
 function LandingChoice({ onPickCreate, onPickJoin }) {
@@ -580,8 +588,8 @@ function CreateLeagueForm({ onBack, onCreated }) {
       const { id, data } = await apiCreateLeague(payload);
       writeMembership({ leagueId: id, memberId, memberName: payload.members[0].name });
       onCreated({ id, data });
-    } catch {
-      setError("Couldn't create the league. Check your connection and try again.");
+    } catch (e) {
+      setError(`Couldn't create the league (${e.message}). Check your connection and try again.`);
     } finally {
       setBusy(false);
     }
@@ -651,7 +659,7 @@ function JoinLeagueForm({ onBack, onJoined }) {
       if (e.message === "not found") {
         setError("That code doesn't match a league. Double-check and try again.");
       } else {
-        setError("Couldn't reach the league service. Check your connection and try again.");
+        setError(`Couldn't reach the league service (${e.message}). Check your connection and try again.`);
       }
     } finally {
       setBusy(false);
@@ -672,7 +680,7 @@ function JoinLeagueForm({ onBack, onJoined }) {
           <input
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="e.g. 5226-5717-3004-3f8b"
+            placeholder="e.g. Fd55-uogX-yxYd-nXJv"
             autoCapitalize="none"
             className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[JetBrains_Mono] text-sm tracking-wider text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
           />
