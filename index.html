@@ -92,40 +92,6 @@ function IconTrophy({ size = 20, color = "currentColor" }) {
     </svg>
   );
 }
-function IconCopy({ size = 16, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="9" width="13" height="13" rx="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-}
-function IconCheck({ size = 16, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-function IconUsers({ size = 18, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-function IconLogOut({ size = 16, color = "currentColor" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-      <polyline points="16 17 21 12 16 7" />
-      <line x1="21" y1="12" x2="9" y2="12" />
-    </svg>
-  );
-}
 
 /* ---------------------------- SHARED ---------------------------- */
 
@@ -469,419 +435,202 @@ function Games() {
   );
 }
 
-/* ---------------------------- FANTASY LEAGUE ---------------------------- */
+/* ---------------------------- FIELD GOAL KICKER ---------------------------- */
 /*
-  There's no server of our own here — this is a static page. To let two
-  different devices share one league, we lean on jsonstorage.net, a free
-  JSON storage API built for exactly this: anonymous create/read/write,
-  CORS-enabled, no account or email required. Each league becomes one
-  stored record; the record's address doubles as the join code. It's not
-  the prettiest code, but it's the only way to sync data between devices
-  without asking you to stand up your own backend.
+  A self-contained mini-game — no network, no backend, nothing to break.
+  Two-tap kicking mechanic: lock your POWER as a moving marker sweeps a bar,
+  then lock your AIM the same way. Land both in range to make the kick.
+  Distance ramps up as your streak grows. Best streak is remembered on this
+  device only (localStorage), so nothing to sync and nothing to go wrong.
 */
 
-const JSONSTORAGE_API = "https://api.jsonstorage.net/v1/json";
-const LS_KEY = "rnfl_fantasy_membership";
+const KICKER_BEST_KEY = "rnfl_kicker_best_streak";
 
-function uid() {
-  return window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-function readMembership() {
+function readBestStreak() {
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : null;
+    return Number(localStorage.getItem(KICKER_BEST_KEY)) || 0;
   } catch {
-    return null;
+    return 0;
   }
 }
-function writeMembership(obj) {
+function writeBestStreak(n) {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(obj));
+    localStorage.setItem(KICKER_BEST_KEY, String(n));
   } catch {}
 }
-function clearMembership() {
-  try {
-    localStorage.removeItem(LS_KEY);
-  } catch {}
+
+function nextDistance(streak) {
+  const base = 25 + Math.min(streak, 12) * 3;
+  const jitter = Math.floor(Math.random() * 6) - 2;
+  return Math.max(20, Math.min(58, base + jitter));
 }
-function formatCode(id) {
-  return id;
-}
-function normalizeCode(input) {
-  return input.trim().replace(/^\/+|\/+$/g, "");
+// higher distance -> narrower power sweet-spot and tighter aim window
+function difficultyFor(distance) {
+  const t = (distance - 20) / (58 - 20); // 0..1
+  const powerMin = 55 + t * 25; // 55 -> 80
+  const powerMax = 100;
+  const aimHalfWidth = 16 - t * 9; // 16 -> 7 (degrees of the 0-100 bar, centered at 50)
+  return { powerMin, powerMax, aimHalfWidth };
 }
 
-async function apiCreateLeague(payload) {
-  const res = await fetch(JSONSTORAGE_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = (await res.text()).slice(0, 140);
-    } catch {}
-    throw new Error(`couldn't save (${res.status})${detail ? ": " + detail : ""}`);
-  }
-  const json = await res.json();
-  const uri = json?.uri;
-  if (!uri) throw new Error("no id returned");
-  const marker = "/v1/json/";
-  const idx = uri.indexOf(marker);
-  if (idx === -1) throw new Error("unexpected id format");
-  const code = uri.slice(idx + marker.length);
-  return { id: code, data: payload };
-}
-async function apiGetLeague(code) {
-  const res = await fetch(`${JSONSTORAGE_API}/${code}`);
-  if (res.status === 404) throw new Error("not found");
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = (await res.text()).slice(0, 140);
-    } catch {}
-    throw new Error(`couldn't load (${res.status})${detail ? ": " + detail : ""}`);
-  }
-  return res.json();
-}
-async function apiSaveLeague(code, payload) {
-  const res = await fetch(`${JSONSTORAGE_API}/${code}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = (await res.text()).slice(0, 140);
-    } catch {}
-    throw new Error(`couldn't save (${res.status})${detail ? ": " + detail : ""}`);
-  }
-  return payload;
-}
-
-function LandingChoice({ onPickCreate, onPickJoin }) {
+function SweepBar({ value, zoneStart, zoneEnd, colorClass = "bg-[#F2A93B]" }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-8 gap-4 text-center">
-      <IconTrophy size={40} color="#F2A93B" />
-      <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Fantasy League</h2>
-      <p className="font-[Inter] text-sm text-[#6b7482] max-w-xs">
-        Start a league on this device and share the code, or join a league someone already started.
-      </p>
-      <div className="w-full max-w-xs flex flex-col gap-3 mt-2">
-        <button onClick={onPickCreate} className="w-full py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform">
-          Create a League
-        </button>
-        <button onClick={onPickJoin} className="w-full py-3 rounded-xl bg-[#1c2129] text-[#e8ecf1] font-[Inter] text-sm font-medium tracking-wide active:scale-[0.98] transition-transform">
-          Join a League
-        </button>
-      </div>
+    <div className="relative w-full h-10 rounded-lg bg-[#1c2129] overflow-hidden">
+      {zoneStart != null && (
+        <div
+          className="absolute top-0 bottom-0 bg-[#2a3a2a]"
+          style={{ left: `${zoneStart}%`, width: `${zoneEnd - zoneStart}%` }}
+        />
+      )}
+      <div className={`absolute top-0 bottom-0 w-1 ${colorClass}`} style={{ left: `${value}%` }} />
     </div>
   );
 }
 
-function CreateLeagueForm({ onBack, onCreated }) {
-  const [leagueName, setLeagueName] = useState("");
-  const [yourName, setYourName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+function FieldGoalGame() {
+  const [phase, setPhase] = useState("power"); // power | aim | result
+  const [distance, setDistance] = useState(() => nextDistance(0));
+  const [marker, setMarker] = useState(0);
+  const [dir, setDir] = useState(1);
+  const [power, setPower] = useState(null);
+  const [aim, setAim] = useState(null);
+  const [streak, setStreak] = useState(0);
+  const [best, setBest] = useState(() => readBestStreak());
+  const [result, setResult] = useState(null); // { good, reason }
+  const rafRef = useRef(null);
 
-  const submit = async () => {
-    if (!leagueName.trim() || !yourName.trim()) return;
-    setBusy(true);
-    setError("");
-    try {
-      const memberId = uid();
-      const payload = {
-        name: leagueName.trim().slice(0, 40),
-        createdAt: Date.now(),
-        members: [{ id: memberId, name: yourName.trim().slice(0, 24), points: 0, joinedAt: Date.now() }],
-      };
-      const { id, data } = await apiCreateLeague(payload);
-      writeMembership({ leagueId: id, memberId, memberName: payload.members[0].name });
-      onCreated({ id, data });
-    } catch (e) {
-      setError(`Couldn't create the league (${e.message}). Check your connection and try again.`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-4 pt-5 pb-3">
-        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
-          <IconChevronLeft size={22} />
-        </button>
-        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">New League</span>
-      </div>
-      <div className="flex-1 px-6 pt-4 flex flex-col gap-4">
-        <div>
-          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">League name</label>
-          <input
-            value={leagueName}
-            onChange={(e) => setLeagueName(e.target.value)}
-            placeholder="e.g. Sunday Sweats"
-            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[Inter] text-sm text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
-          />
-        </div>
-        <div>
-          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">Your name</label>
-          <input
-            value={yourName}
-            onChange={(e) => setYourName(e.target.value)}
-            placeholder="e.g. Jordan"
-            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[Inter] text-sm text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
-          />
-        </div>
-        {error && <div className="font-[Inter] text-xs text-[#FF3D2E]">{error}</div>}
-        <button
-          onClick={submit}
-          disabled={busy || !leagueName.trim() || !yourName.trim()}
-          className="mt-2 w-full py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide disabled:opacity-40 active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
-        >
-          {busy ? <Spinner size={16} /> : null}
-          {busy ? "Creating…" : "Create League"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function JoinLeagueForm({ onBack, onJoined }) {
-  const [code, setCode] = useState("");
-  const [yourName, setYourName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const submit = async () => {
-    const id = normalizeCode(code);
-    if (!id || !yourName.trim()) return;
-    setBusy(true);
-    setError("");
-    try {
-      const data = await apiGetLeague(id);
-      const memberId = uid();
-      const member = { id: memberId, name: yourName.trim().slice(0, 24), points: 0, joinedAt: Date.now() };
-      const updated = { ...data, members: [...(data.members ?? []), member] };
-      await apiSaveLeague(id, updated);
-      writeMembership({ leagueId: id, memberId, memberName: member.name });
-      onJoined({ id, data: updated });
-    } catch (e) {
-      if (e.message === "not found") {
-        setError("That code doesn't match a league. Double-check and try again.");
-      } else {
-        setError(`Couldn't reach the league service (${e.message}). Check your connection and try again.`);
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-4 pt-5 pb-3">
-        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
-          <IconChevronLeft size={22} />
-        </button>
-        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">Join League</span>
-      </div>
-      <div className="flex-1 px-6 pt-4 flex flex-col gap-4">
-        <div>
-          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">Join code</label>
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="e.g. 66f1c2a9.../8f3b2e1c..."
-            autoCapitalize="none"
-            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[JetBrains_Mono] text-sm tracking-wider text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
-          />
-        </div>
-        <div>
-          <label className="font-[Inter] text-xs text-[#6b7482] tracking-wide">Your name</label>
-          <input
-            value={yourName}
-            onChange={(e) => setYourName(e.target.value)}
-            placeholder="e.g. Jordan"
-            className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[Inter] text-sm text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
-          />
-        </div>
-        {error && <div className="font-[Inter] text-xs text-[#FF3D2E]">{error}</div>}
-        <button
-          onClick={submit}
-          disabled={busy || !code.trim() || !yourName.trim()}
-          className="mt-2 w-full py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide disabled:opacity-40 active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
-        >
-          {busy ? <Spinner size={16} /> : null}
-          {busy ? "Joining…" : "Join League"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function LeagueDashboard({ membership, onLeave }) {
-  const [status, setStatus] = useState("loading");
-  const [league, setLeague] = useState(null);
-  const [copied, setCopied] = useState(false);
-  const [pointsDraft, setPointsDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [confirmingLeave, setConfirmingLeave] = useState(false);
-
-  const load = useCallback(
-    (silent) => {
-      if (!silent) setStatus("loading");
-      apiGetLeague(membership.leagueId)
-        .then((data) => {
-          setLeague(data);
-          setStatus("ok");
-          const me = (data.members ?? []).find((m) => m.id === membership.memberId);
-          setPointsDraft(me ? String(me.points ?? 0) : "0");
-        })
-        .catch(() => {
-          if (!silent) setStatus("error");
-        });
-    },
-    [membership.leagueId, membership.memberId]
-  );
+  const diff = difficultyFor(distance);
+  const speed = 1.8 + Math.min(streak, 10) * 0.15; // gets a bit faster with streak
 
   useEffect(() => {
-    load(false);
-    const id = setInterval(() => load(true), 45000);
+    if (phase !== "power" && phase !== "aim") return;
+    let raw = marker;
+    let d = dir;
+    const id = setInterval(() => {
+      raw += d * speed;
+      if (raw >= 100) {
+        raw = 100;
+        d = -1;
+      } else if (raw <= 0) {
+        raw = 0;
+        d = 1;
+      }
+      setMarker(raw);
+      setDir(d);
+    }, 16);
+    rafRef.current = id;
     return () => clearInterval(id);
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, speed]);
 
-  const copyCode = async () => {
-    const formatted = formatCode(membership.leagueId);
-    try {
-      await navigator.clipboard.writeText(formatted);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {}
-  };
-
-  const share = async () => {
-    const formatted = formatCode(membership.leagueId);
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: league?.name ?? "Fantasy League", text: `Join my fantasy league "${league?.name ?? ""}" — code: ${formatted}` });
-      } catch {}
-    } else {
-      copyCode();
+  const lock = () => {
+    if (phase === "power") {
+      setPower(marker);
+      setMarker(0);
+      setDir(1);
+      setPhase("aim");
+      return;
+    }
+    if (phase === "aim") {
+      const finalAim = marker;
+      setAim(finalAim);
+      const powerGood = power >= diff.powerMin && power <= diff.powerMax;
+      const aimGood = Math.abs(finalAim - 50) <= diff.aimHalfWidth;
+      const good = powerGood && aimGood;
+      let reason = "";
+      if (!good) {
+        if (!powerGood && power < diff.powerMin) reason = "Not enough power — fell short.";
+        else if (!powerGood) reason = "Overkicked — sailed long, but wide.";
+        else reason = finalAim < 50 ? "Wide left." : "Wide right.";
+      }
+      const newStreak = good ? streak + 1 : 0;
+      setStreak(newStreak);
+      if (newStreak > best) {
+        setBest(newStreak);
+        writeBestStreak(newStreak);
+      }
+      setResult({ good, reason });
+      setPhase("result");
     }
   };
 
-  const savePoints = async () => {
-    if (!league) return;
-    const val = Math.max(0, Math.min(9999, Number(pointsDraft) || 0));
-    setSaving(true);
-    try {
-      const updatedMembers = (league.members ?? []).map((m) => (m.id === membership.memberId ? { ...m, points: val } : m));
-      const updated = { ...league, members: updatedMembers };
-      await apiSaveLeague(membership.leagueId, updated);
-      setLeague(updated);
-    } catch {
-      // silently ignore; next auto-refresh will resync
-    } finally {
-      setSaving(false);
-    }
+  const nextKick = () => {
+    const nextStreak = result?.good ? streak : 0;
+    setDistance(nextDistance(nextStreak));
+    setPower(null);
+    setAim(null);
+    setResult(null);
+    setMarker(0);
+    setDir(1);
+    setPhase("power");
   };
-
-  if (status === "loading") {
-    return (
-      <div className="flex flex-col h-full">
-        <LoadingBlock label="Loading your league…" />
-      </div>
-    );
-  }
-  if (status === "error") {
-    return (
-      <div className="flex flex-col h-full">
-        <ErrorBlock label="Couldn't reach the league service." onRetry={() => load(false)} />
-      </div>
-    );
-  }
-
-  const members = [...(league.members ?? [])].sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto px-5 pt-6 pb-8">
-        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">{league.name}</h2>
-        <div className="mt-1 font-[Inter] text-xs text-[#6b7482] flex items-center gap-1.5">
-          <IconUsers size={13} /> {members.length} member{members.length === 1 ? "" : "s"}
-        </div>
-
-        <div className="mt-5 rounded-xl bg-[#14181d] p-4">
-          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Join Code</div>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 font-[JetBrains_Mono] text-base text-[#F2A93B] tracking-wider break-all">{formatCode(membership.leagueId)}</div>
-            <button onClick={copyCode} className="shrink-0 p-2 rounded-lg bg-[#1c2129] text-[#c3c9d2] active:scale-95 transition-transform">
-              {copied ? <IconCheck size={16} color="#F2A93B" /> : <IconCopy size={16} />}
-            </button>
-            {!!navigator.share && (
-              <button onClick={share} className="shrink-0 px-3 py-2 rounded-lg bg-[#1c2129] text-[#c3c9d2] font-[Inter] text-xs font-medium active:scale-95 transition-transform">
-                Share
-              </button>
-            )}
-          </div>
-          <div className="mt-2 font-[Inter] text-[11px] text-[#4c5563]">Share this so others can join from any device.</div>
-        </div>
-
-        <div className="mt-6 rounded-xl bg-[#14181d] p-4">
-          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Your Points</div>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={pointsDraft}
-              onChange={(e) => setPointsDraft(e.target.value)}
-              className="w-24 bg-[#1c2129] rounded-lg px-3 py-2 font-[JetBrains_Mono] text-sm text-[#e8ecf1] outline-none focus:ring-1 focus:ring-[#F2A93B]"
-            />
-            <button
-              onClick={savePoints}
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-[#F2A93B] text-[#12151b] font-[Inter] text-xs font-semibold disabled:opacity-40 active:scale-95 transition-transform"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
+      <div className="flex-1 overflow-y-auto px-6 pt-6 pb-8 flex flex-col">
+        <div className="flex items-center justify-between">
+          <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Field Goal</h2>
+          <div className="flex items-center gap-1.5 text-[#F2A93B]">
+            <IconTrophy size={16} />
+            <span className="font-[JetBrains_Mono] text-sm">{best}</span>
           </div>
         </div>
+        <div className="mt-1 font-[Inter] text-xs text-[#6b7482]">Best streak on this device</div>
 
-        <div className="mt-6">
-          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Leaderboard</div>
-          <div className="rounded-xl overflow-hidden bg-[#14181d]">
-            {members.map((m, i) => (
-              <div
-                key={m.id}
-                className={`flex items-center gap-3 px-3.5 py-3 ${i !== members.length - 1 ? "border-b border-[#1a1f26]" : ""}`}
-              >
-                <span className="font-[Teko] text-lg text-[#4c5563] w-5 text-center">{i + 1}</span>
-                <span className="font-[Inter] text-sm text-[#e8ecf1] flex-1 truncate">
-                  {m.name}
-                  {m.id === membership.memberId ? <span className="text-[#F2A93B]"> (you)</span> : null}
-                </span>
-                <span className="font-[JetBrains_Mono] text-sm text-[#c3c9d2]">{m.points ?? 0}</span>
+        <div className="mt-8 flex flex-col items-center">
+          <div className="font-[Teko] text-6xl text-[#e8ecf1] leading-none">{distance}</div>
+          <div className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482] mt-1">yard attempt</div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-center gap-2">
+          <span className="font-[Inter] text-xs text-[#4c5563]">Streak</span>
+          <span className="font-[Teko] text-2xl text-[#F2A93B] leading-none">{streak}</span>
+        </div>
+
+        <div className="mt-10 flex-1 flex flex-col justify-center gap-8">
+          {phase !== "result" && (
+            <div>
+              <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2 text-center">
+                {phase === "power" ? "Tap to set POWER" : "Tap to set AIM"}
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-8">
-          {!confirmingLeave ? (
-            <button
-              onClick={() => setConfirmingLeave(true)}
-              className="w-full py-3 rounded-xl bg-[#1c2129] text-[#8b93a1] font-[Inter] text-sm font-medium tracking-wide flex items-center justify-center gap-2"
-            >
-              <IconLogOut size={15} /> Leave League
-            </button>
-          ) : (
-            <div className="flex gap-2">
-              <button onClick={() => setConfirmingLeave(false)} className="flex-1 py-3 rounded-xl bg-[#1c2129] text-[#c3c9d2] font-[Inter] text-sm font-medium">
-                Cancel
+              <SweepBar
+                value={marker}
+                zoneStart={phase === "aim" ? 50 - diff.aimHalfWidth : null}
+                zoneEnd={phase === "aim" ? 50 + diff.aimHalfWidth : null}
+                colorClass={phase === "power" ? "bg-[#F2A93B]" : "bg-[#FF3D2E]"}
+              />
+              {phase === "power" && (
+                <div className="mt-1 flex justify-between font-[JetBrains_Mono] text-[10px] text-[#4c5563]">
+                  <span>Weak</span>
+                  <span>Strong</span>
+                </div>
+              )}
+              {phase === "aim" && (
+                <div className="mt-1 flex justify-between font-[JetBrains_Mono] text-[10px] text-[#4c5563]">
+                  <span>Left</span>
+                  <span>Right</span>
+                </div>
+              )}
+              <button
+                onClick={lock}
+                className="mt-6 w-full py-4 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-base font-semibold tracking-wide active:scale-[0.98] transition-transform"
+              >
+                {phase === "power" ? "Lock Power" : "Kick!"}
               </button>
-              <button onClick={onLeave} className="flex-1 py-3 rounded-xl bg-[#FF3D2E] text-[#12151b] font-[Inter] text-sm font-semibold">
-                Confirm Leave
+            </div>
+          )}
+
+          {phase === "result" && result && (
+            <div className="flex flex-col items-center gap-4">
+              <div className={`font-[Teko] text-5xl leading-none ${result.good ? "text-[#F2A93B]" : "text-[#FF3D2E]"}`}>
+                {result.good ? "GOOD! 🏈" : "NO GOOD"}
+              </div>
+              {!result.good && <div className="font-[Inter] text-sm text-[#8b93a1] text-center">{result.reason}</div>}
+              <button
+                onClick={nextKick}
+                className="mt-2 w-full py-4 rounded-xl bg-[#1c2129] text-[#e8ecf1] font-[Inter] text-base font-semibold tracking-wide active:scale-[0.98] transition-transform"
+              >
+                Next Kick
               </button>
             </div>
           )}
@@ -889,42 +638,6 @@ function LeagueDashboard({ membership, onLeave }) {
       </div>
     </div>
   );
-}
-
-function Fantasy() {
-  const [membership, setMembership] = useState(() => readMembership());
-  const [screen, setScreen] = useState("landing"); // landing | create | join
-
-  if (membership) {
-    return (
-      <LeagueDashboard
-        membership={membership}
-        onLeave={() => {
-          clearMembership();
-          setMembership(null);
-          setScreen("landing");
-        }}
-      />
-    );
-  }
-
-  if (screen === "create") {
-    return (
-      <CreateLeagueForm
-        onBack={() => setScreen("landing")}
-        onCreated={() => setMembership(readMembership())}
-      />
-    );
-  }
-  if (screen === "join") {
-    return (
-      <JoinLeagueForm
-        onBack={() => setScreen("landing")}
-        onJoined={() => setMembership(readMembership())}
-      />
-    );
-  }
-  return <LandingChoice onPickCreate={() => setScreen("create")} onPickJoin={() => setScreen("join")} />;
 }
 
 /* ---------------------------- APP SHELL ---------------------------- */
@@ -939,20 +652,20 @@ function App() {
           <span className="w-2 h-2 rounded-full bg-[#FF3D2E]" />
           <h1 className="font-[Teko] text-2xl tracking-[0.08em] text-[#e8ecf1]">RNFL</h1>
         </div>
-        <span className="font-[JetBrains_Mono] text-[10px] text-[#4c5563] uppercase tracking-widest">{new Date().getFullYear()} Season · build v3</span>
+        <span className="font-[JetBrains_Mono] text-[10px] text-[#4c5563] uppercase tracking-widest">{new Date().getFullYear()} Season</span>
       </div>
 
       <div className="flex-1 min-h-0">
         {tab === "home" && <Home />}
         {tab === "games" && <Games />}
-        {tab === "fantasy" && <Fantasy />}
+        {tab === "kicker" && <FieldGoalGame />}
       </div>
 
       <div className="flex items-stretch border-t border-[#1a1f26] bg-[#0d0f13]">
         {[
           { key: "home", label: "Home", Icon: IconHome },
           { key: "games", label: "Games", Icon: IconCalendar },
-          { key: "fantasy", label: "Fantasy League", Icon: IconTrophy },
+          { key: "kicker", label: "Field Goal", Icon: IconTrophy },
         ].map(({ key, label, Icon }) => (
           <button key={key} onClick={() => setTab(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5">
             <Icon size={20} color={tab === key ? "#F2A93B" : "#5a6472"} />
