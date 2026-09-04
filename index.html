@@ -472,15 +472,15 @@ function Games() {
 /* ---------------------------- FANTASY LEAGUE ---------------------------- */
 /*
   There's no server of our own here — this is a static page. To let two
-  different devices share one league, we lean on kvdb.io, a free public
-  key-value storage API built for exactly this (anonymous create/read/write,
-  designed to be called directly from browser JS). Each league gets its own
-  "bucket"; the bucket ID doubles as the join code. It's not the prettiest
-  code, but it's the only way to sync data between devices without asking
-  you to stand up your own backend.
+  different devices share one league, we lean on jsonstorage.net, a free
+  JSON storage API built for exactly this: anonymous create/read/write,
+  CORS-enabled, no account or email required. Each league becomes one
+  stored record; the record's address doubles as the join code. It's not
+  the prettiest code, but it's the only way to sync data between devices
+  without asking you to stand up your own backend.
 */
 
-const KVDB_ROOT = "https://kvdb.io";
+const JSONSTORAGE_API = "https://api.jsonstorage.net/v1/json";
 const LS_KEY = "rnfl_fantasy_membership";
 
 function uid() {
@@ -505,52 +505,36 @@ function clearMembership() {
   } catch {}
 }
 function formatCode(id) {
-  return (id.match(/.{1,4}/g) || [id]).join("-");
+  return id;
 }
 function normalizeCode(input) {
-  return input.replace(/[\s-]/g, "");
+  return input.trim().replace(/^\/+|\/+$/g, "");
 }
 
 async function apiCreateLeague(payload) {
-  const bucketRes = await fetch(KVDB_ROOT, {
-    method: "POST",
-    body: new URLSearchParams({ email: "rnfl-league@example.com" }),
-  });
-  if (!bucketRes.ok) {
-    let detail = "";
-    try {
-      detail = (await bucketRes.text()).slice(0, 140);
-    } catch {}
-    throw new Error(`couldn't set up storage (${bucketRes.status})${detail ? ": " + detail : ""}`);
-  }
-  const bucketId = (await bucketRes.text()).trim();
-  if (!bucketId || bucketId.length > 64) throw new Error("unexpected response from storage service");
-
-  // best-effort: make the league's data permanent instead of expiring after a week.
-  // Not fatal if this fails — the league will just fall back to the default 1-week TTL.
-  try {
-    await fetch(`${KVDB_ROOT}/${bucketId}`, {
-      method: "PATCH",
-      body: new URLSearchParams({ default_ttl: "0" }),
-    });
-  } catch {}
-
-  const setRes = await fetch(`${KVDB_ROOT}/${bucketId}/data`, {
+  const res = await fetch(JSONSTORAGE_API, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!setRes.ok) {
+  if (!res.ok) {
     let detail = "";
     try {
-      detail = (await setRes.text()).slice(0, 140);
+      detail = (await res.text()).slice(0, 140);
     } catch {}
-    throw new Error(`couldn't save (${setRes.status})${detail ? ": " + detail : ""}`);
+    throw new Error(`couldn't save (${res.status})${detail ? ": " + detail : ""}`);
   }
-  return { id: bucketId, data: payload };
+  const json = await res.json();
+  const uri = json?.uri;
+  if (!uri) throw new Error("no id returned");
+  const marker = "/v1/json/";
+  const idx = uri.indexOf(marker);
+  if (idx === -1) throw new Error("unexpected id format");
+  const code = uri.slice(idx + marker.length);
+  return { id: code, data: payload };
 }
-async function apiGetLeague(id) {
-  const res = await fetch(`${KVDB_ROOT}/${id}/data`);
+async function apiGetLeague(code) {
+  const res = await fetch(`${JSONSTORAGE_API}/${code}`);
   if (res.status === 404) throw new Error("not found");
   if (!res.ok) {
     let detail = "";
@@ -559,16 +543,11 @@ async function apiGetLeague(id) {
     } catch {}
     throw new Error(`couldn't load (${res.status})${detail ? ": " + detail : ""}`);
   }
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("bad data");
-  }
+  return res.json();
 }
-async function apiSaveLeague(id, payload) {
-  const res = await fetch(`${KVDB_ROOT}/${id}/data`, {
-    method: "POST",
+async function apiSaveLeague(code, payload) {
+  const res = await fetch(`${JSONSTORAGE_API}/${code}`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
@@ -714,7 +693,7 @@ function JoinLeagueForm({ onBack, onJoined }) {
           <input
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="e.g. Fd55-uogX-yxYd-nXJv"
+            placeholder="e.g. 66f1c2a9.../8f3b2e1c..."
             autoCapitalize="none"
             className="mt-1 w-full bg-[#1c2129] rounded-lg px-3.5 py-3 font-[JetBrains_Mono] text-sm tracking-wider text-[#e8ecf1] placeholder-[#4c5563] outline-none focus:ring-1 focus:ring-[#F2A93B]"
           />
@@ -960,7 +939,7 @@ function App() {
           <span className="w-2 h-2 rounded-full bg-[#FF3D2E]" />
           <h1 className="font-[Teko] text-2xl tracking-[0.08em] text-[#e8ecf1]">RNFL</h1>
         </div>
-        <span className="font-[JetBrains_Mono] text-[10px] text-[#4c5563] uppercase tracking-widest">{new Date().getFullYear()} Season</span>
+        <span className="font-[JetBrains_Mono] text-[10px] text-[#4c5563] uppercase tracking-widest">{new Date().getFullYear()} Season · build v3</span>
       </div>
 
       <div className="flex-1 min-h-0">
