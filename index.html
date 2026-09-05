@@ -438,24 +438,17 @@ function Games() {
 /* ---------------------------- WEEKLY PICKS ---------------------------- */
 /*
   A season-long, single-device game — no shared backend, nothing to sync.
-  Once: choose 3 position types out of QB/RB/WR/TE/K/DEF.
-  Every week: pick one real player (or, for DEF, one real team) per
-  position. Score comes only from real scoring PLAYS — field goals,
-  touchdowns, pick-sixes, safeties — pulled from ESPN's public game data,
-  matched to your picks by name/team. Your weekly total is checked against
-  every NFL team's actual score that week: beat more than half the league
-  and you pass the week. Recalculates itself automatically once a day (and
-  periodically while the app is open) — no button required, though one is
-  there if you want to force a refresh.
-
-  Caveat worth being upfront about: ESPN's scoring-play text doesn't
-  include player IDs, only descriptions ("Josh Allen 12 Yd Run"), so
-  attributing a play to your pick is done by matching last names in that
-  text. It's a best-effort heuristic, not perfect — rare shared-surname
-  collisions in the same game could misattribute a play.
+  Once: choose 3 position types out of QB/RB/WR/TE/K/DEF. No drafting
+  individual players — you're backing the whole position league-wide.
+  Every scoring play (TD, FG, pick-6/return TD, safety) across every game
+  that week gets attributed to a real player and a real position using
+  ESPN's public box scores, then summed. Your score is the total for your
+  3 chosen positions, shown alongside a league-wide top-scorers board.
+  Recalculates itself automatically once a day (and periodically while the
+  app stays open) — a manual refresh button is there too.
 */
 
-const PICKS_KEY = "rnfl_weekly_picks_v1";
+const PICKS_KEY = "rnfl_position_pool_v1";
 const POSITION_OPTIONS = [
   { key: "QB", label: "Quarterback" },
   { key: "RB", label: "Running Back" },
@@ -468,9 +461,9 @@ const POSITION_OPTIONS = [
 function readPicksState() {
   try {
     const raw = localStorage.getItem(PICKS_KEY);
-    return raw ? JSON.parse(raw) : { positions: [], picksByWeek: {}, log: {}, lastAutoDate: {} };
+    return raw ? JSON.parse(raw) : { positions: [], log: {}, lastAutoDate: {} };
   } catch {
-    return { positions: [], picksByWeek: {}, log: {}, lastAutoDate: {} };
+    return { positions: [], log: {}, lastAutoDate: {} };
   }
 }
 function writePicksState(data) {
@@ -482,44 +475,49 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function findStatIndex(category, name) {
+  const labels = category?.labels || [];
+  return labels.findIndex((l) => (l || "").toUpperCase() === name);
+}
+function numAt(arr, idx) {
+  if (idx == null || idx < 0 || !arr) return 0;
+  const raw = String(arr[idx] ?? "0").replace(/,/g, "");
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+function madeCountAt(arr, idx) {
+  // kicking "FG" stat is usually "made/att" or "made-att"
+  if (idx == null || idx < 0 || !arr) return 0;
+  const raw = String(arr[idx] ?? "0");
+  const made = parseInt(raw.split(/[/-]/)[0], 10);
+  return Number.isFinite(made) ? made : 0;
+}
+
 function classifyPlay(play) {
   const label = `${play?.type?.text || ""} ${play?.type?.abbreviation || ""} ${play?.scoringType?.name || ""} ${
     play?.scoringType?.abbreviation || ""
   }`.toLowerCase();
   if (label.includes("safety")) return "SAFETY";
-  if (label.includes("field goal") || label === " fg") return "FG";
   if (label.includes("touchdown") || label.includes(" td")) return "TD";
   return null;
-}
-function playMentionsName(play, fullName) {
-  const text = (play.text || "").toLowerCase();
-  const last = (fullName || "").trim().split(" ").slice(-1)[0].toLowerCase();
-  return last.length > 1 && text.includes(last);
 }
 function isReturnOrSTPlay(play) {
   const text = (play.text || "").toLowerCase();
   return ["interception return", "fumble return", "punt return", "kickoff return", "blocked"].some((k) => text.includes(k));
 }
 function isPickSix(play) {
-  const text = (play.text || "").toLowerCase();
-  return text.includes("interception return");
+  return (play.text || "").toLowerCase().includes("interception return");
 }
 
-async function getScoringPlays(eventId, cache) {
-  if (cache[eventId] !== undefined) return cache[eventId];
+async function getScoringPlays(eventId) {
   try {
     const res = await fetch(`${BASE}/summary?event=${eventId}`);
-    if (!res.ok) {
-      cache[eventId] = null;
-      return null;
-    }
+    if (!res.ok) return null;
     const data = await res.json();
-    const plays = data.scoringPlays || (data.plays || []).filter((p) => p.scoringPlay);
-    cache[eventId] = plays || [];
+    return data.scoringPlays || (data.plays || []).filter((p) => p.scoringPlay) || [];
   } catch {
-    cache[eventId] = null;
+    return null;
   }
-  return cache[eventId];
 }
 
 async function getWeekTeamScores(week, year) {
@@ -538,26 +536,93 @@ async function getWeekTeamScores(week, year) {
   return scores;
 }
 
-function scorePick(pick, plays) {
-  if (!plays) return { points: 0, detail: "Stats unavailable" };
-  const bits = [];
-  let points = 0;
-  if (pick.position === "K") {
-    const fgs = plays.filter((p) => classifyPlay(p) === "FG" && p.team?.id === pick.teamId && playMentionsName(p, pick.fullName));
-    points += fgs.length * 3;
-    if (fgs.length) bits.push(`${fgs.length} FG`);
-  } else if (pick.position === "DEF") {
-    const safeties = plays.filter((p) => classifyPlay(p) === "SAFETY" && p.team?.id === pick.teamId);
-    const defTDs = plays.filter((p) => classifyPlay(p) === "TD" && p.team?.id === pick.teamId && isReturnOrSTPlay(p));
-    points += safeties.length * 2 + defTDs.length * 6;
-    if (safeties.length) bits.push(`${safeties.length} safety`);
-    if (defTDs.length) bits.push(`${defTDs.length} ${defTDs.some(isPickSix) ? "pick-6/return TD" : "return TD"}`);
-  } else {
-    const tds = plays.filter((p) => classifyPlay(p) === "TD" && p.team?.id === pick.teamId && playMentionsName(p, pick.fullName));
-    points += tds.length * 6;
-    if (tds.length) bits.push(`${tds.length} TD`);
+function teamMetaFromEvent(event, teamId) {
+  const c = (event.competitions?.[0]?.competitors || []).find((c) => String(c.team?.id) === String(teamId));
+  if (!c) return null;
+  return { abbr: c.team.abbreviation, name: c.team.displayName, logo: c.team.logo };
+}
+
+// Scans every live/final game for the week and builds a league-wide list
+// of { name, teamAbbr, teamLogo, position, points, notes } entries.
+async function computeLeagueWideScoring(week, year, onProgress) {
+  const res = await fetch(`${BASE}/scoreboard?week=${week}&seasontype=2&year=${year}`);
+  if (!res.ok) throw new Error("couldn't load this week's games");
+  const data = await res.json();
+  const events = (data.events || []).filter((e) => e.status?.type?.state === "post" || e.status?.type?.state === "in");
+
+  const map = new Map();
+  const addPoints = (key, info, pts, note) => {
+    if (pts <= 0) return;
+    if (!map.has(key)) map.set(key, { ...info, points: 0, notes: [] });
+    const entry = map.get(key);
+    entry.points += pts;
+    if (note) entry.notes.push(note);
+  };
+
+  let done = 0;
+  for (const event of events) {
+    onProgress?.(done, events.length);
+    try {
+      const bres = await fetch(`${BASE}/summary?event=${event.id}`);
+      if (bres.ok) {
+        const bdata = await bres.json();
+        const teamBlocks = bdata?.boxscore?.players || [];
+        for (const teamBlock of teamBlocks) {
+          const teamAbbr = teamBlock.team?.abbreviation;
+          const teamLogo = teamBlock.team?.logo;
+          for (const cat of teamBlock.statistics || []) {
+            const catName = (cat.name || "").toLowerCase();
+            if (!["passing", "rushing", "receiving", "kicking"].includes(catName)) continue;
+            const tdIdx = findStatIndex(cat, "TD");
+            const fgIdx = findStatIndex(cat, "FG");
+            for (const a of cat.athletes || []) {
+              const name = a.athlete?.fullName || a.athlete?.displayName;
+              if (!name) continue;
+              const headshot = a.athlete?.headshot?.href;
+              const explicitPos = a.athlete?.position?.abbreviation;
+              const fallbackPos = catName === "passing" ? "QB" : catName === "rushing" ? "RB" : catName === "receiving" ? "WR" : "K";
+              const position = explicitPos || fallbackPos;
+              const key = `${teamAbbr}-${name}-${position}`;
+              if (catName === "kicking") {
+                const made = madeCountAt(a.stats, fgIdx);
+                if (made > 0) addPoints(key, { name, teamAbbr, teamLogo, position: "K", headshot }, made * 3, `${made} FG`);
+              } else {
+                const tds = numAt(a.stats, tdIdx);
+                if (tds > 0) addPoints(key, { name, teamAbbr, teamLogo, position, headshot }, tds * 6, `${tds} TD`);
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    try {
+      const plays = await getScoringPlays(event.id);
+      if (plays) {
+        for (const play of plays) {
+          const cls = classifyPlay(play);
+          if (!cls || !play.team?.id) continue;
+          const meta = teamMetaFromEvent(event, play.team.id);
+          if (!meta) continue;
+          const key = `${meta.abbr}-D/ST-DEF`;
+          if (cls === "SAFETY") {
+            addPoints(key, { name: `${meta.name} D/ST`, teamAbbr: meta.abbr, teamLogo: meta.logo, position: "DEF" }, 2, "Safety");
+          } else if (cls === "TD" && isReturnOrSTPlay(play)) {
+            addPoints(
+              key,
+              { name: `${meta.name} D/ST`, teamAbbr: meta.abbr, teamLogo: meta.logo, position: "DEF" },
+              6,
+              isPickSix(play) ? "Pick-6" : "Return TD"
+            );
+          }
+        }
+      }
+    } catch {}
+    done++;
+    onProgress?.(done, events.length);
   }
-  return { points, detail: bits.join(" · ") || "No scoring plays" };
+
+  return Array.from(map.values());
 }
 
 /* ---------------------------- SETUP ---------------------------- */
@@ -577,7 +642,8 @@ function PositionSetup({ initial, onSave }) {
         <IconTrophy size={36} color="#F2A93B" />
         <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Weekly Picks</h2>
         <p className="font-[Inter] text-sm text-[#6b7482] max-w-xs">
-          Choose exactly 3 positions. Every week you'll pick a real player (or team, for defense) at each one.
+          Choose exactly 3 positions. Your score is the combined league-wide total for everyone who plays those positions
+          — no individual drafting.
         </p>
         <div className="w-full max-w-xs grid grid-cols-2 gap-2 mt-2">
           {POSITION_OPTIONS.map((p) => {
@@ -607,126 +673,16 @@ function PositionSetup({ initial, onSave }) {
   );
 }
 
-/* ---------------------------- PICKER ---------------------------- */
+/* ---------------------------- DASHBOARD ---------------------------- */
 
-function DefPickerList({ onPick, onBack }) {
-  const [status, setStatus] = useState("loading");
-  const [teams, setTeams] = useState([]);
-  const load = useCallback(() => {
-    setStatus("loading");
-    fetch(`${BASE}/teams?limit=32`)
-      .then((r) => {
-        if (!r.ok) throw new Error("bad response");
-        return r.json();
-      })
-      .then((d) => {
-        const list = (d?.sports?.[0]?.leagues?.[0]?.teams ?? []).map((t) => t.team);
-        setTeams(list.sort((a, b) => a.displayName.localeCompare(b.displayName)));
-        setStatus("ok");
-      })
-      .catch(() => setStatus("error"));
-  }, []);
-  useEffect(() => load(), [load]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-4 pt-5 pb-3">
-        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
-          <IconChevronLeft size={22} />
-        </button>
-        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">Choose a Defense</span>
-      </div>
-      <div className="flex-1 overflow-y-auto px-5 pb-6">
-        {status === "loading" && <LoadingBlock label="Loading teams…" />}
-        {status === "error" && <ErrorBlock label="Couldn't load teams." onRetry={load} />}
-        {status === "ok" && (
-          <div className="rounded-xl overflow-hidden bg-[#14181d]">
-            {teams.map((t, i) => (
-              <button
-                key={t.id}
-                onClick={() =>
-                  onPick({
-                    position: "DEF",
-                    teamId: t.id,
-                    teamAbbr: t.abbreviation,
-                    teamLogo: t.logos?.[0]?.href,
-                    fullName: `${t.displayName} D/ST`,
-                  })
-                }
-                className={`w-full flex items-center gap-3 px-3.5 py-3 text-left active:bg-[#1c2129] transition-colors ${
-                  i !== teams.length - 1 ? "border-b border-[#1a1f26]" : ""
-                }`}
-              >
-                <Logo src={t.logos?.[0]?.href} alt={t.displayName} size={28} />
-                <span className="font-[Inter] text-sm text-[#e8ecf1]">{t.displayName} D/ST</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TeamPickerList({ onPick, onBack }) {
-  const [status, setStatus] = useState("loading");
-  const [teams, setTeams] = useState([]);
-  const load = useCallback(() => {
-    setStatus("loading");
-    fetch(`${BASE}/teams?limit=32`)
-      .then((r) => {
-        if (!r.ok) throw new Error("bad response");
-        return r.json();
-      })
-      .then((d) => {
-        const list = (d?.sports?.[0]?.leagues?.[0]?.teams ?? []).map((t) => t.team);
-        setTeams(list.sort((a, b) => a.displayName.localeCompare(b.displayName)));
-        setStatus("ok");
-      })
-      .catch(() => setStatus("error"));
-  }, []);
-  useEffect(() => load(), [load]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-4 pt-5 pb-3">
-        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
-          <IconChevronLeft size={22} />
-        </button>
-        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">Choose a Team</span>
-      </div>
-      <div className="flex-1 overflow-y-auto px-5 pb-6">
-        {status === "loading" && <LoadingBlock label="Loading teams…" />}
-        {status === "error" && <ErrorBlock label="Couldn't load teams." onRetry={load} />}
-        {status === "ok" && (
-          <div className="rounded-xl overflow-hidden bg-[#14181d]">
-            {teams.map((t, i) => (
-              <button
-                key={t.id}
-                onClick={() => onPick(t)}
-                className={`w-full flex items-center gap-3 px-3.5 py-3 text-left active:bg-[#1c2129] transition-colors ${
-                  i !== teams.length - 1 ? "border-b border-[#1a1f26]" : ""
-                }`}
-              >
-                <Logo src={t.logos?.[0]?.href} alt={t.displayName} size={28} />
-                <span className="font-[Inter] text-sm text-[#e8ecf1]">{t.displayName}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Headshot({ src, alt, name, size = 44 }) {
+function Headshot({ src, alt, name, size = 40 }) {
   const [broken, setBroken] = useState(false);
   const initials = (name || "?").split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   if (!src || broken) {
     return (
       <div
         style={{ width: size, height: size }}
-        className="rounded-lg bg-[#1c2129] flex items-center justify-center text-[#5a6472] font-[Teko] text-lg shrink-0"
+        className="rounded-lg bg-[#1c2129] flex items-center justify-center text-[#5a6472] font-[Teko] text-base shrink-0"
       >
         {initials || "?"}
       </div>
@@ -743,92 +699,12 @@ function Headshot({ src, alt, name, size = 44 }) {
   );
 }
 
-function PlayerPickerList({ team, position, onPick, onBack }) {
-  const [status, setStatus] = useState("loading");
-  const [players, setPlayers] = useState([]);
-  const load = useCallback(() => {
-    setStatus("loading");
-    fetch(`${BASE}/teams/${team.id}/roster`)
-      .then((r) => {
-        if (!r.ok) throw new Error("bad response");
-        return r.json();
-      })
-      .then((d) => {
-        const groups = d?.athletes ?? [];
-        const flat = [];
-        groups.forEach((g) => (g.items || []).forEach((p) => flat.push(p)));
-        setPlayers(flat.filter((p) => p.position?.abbreviation === position));
-        setStatus("ok");
-      })
-      .catch(() => setStatus("error"));
-  }, [team.id, position]);
-  useEffect(() => load(), [load]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 pt-5 pb-3">
-        <button onClick={onBack} className="p-1 -ml-1 text-[#c3c9d2]">
-          <IconChevronLeft size={22} />
-        </button>
-        <Logo src={team.logos?.[0]?.href} alt={team.displayName} size={24} />
-        <span className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482]">{team.shortDisplayName}</span>
-      </div>
-      <div className="flex-1 overflow-y-auto px-5 pb-6">
-        {status === "loading" && <LoadingBlock label="Loading roster…" />}
-        {status === "error" && <ErrorBlock label="Couldn't load this roster." onRetry={load} />}
-        {status === "ok" && players.length === 0 && (
-          <div className="text-[#6b7482] font-[Inter] text-sm py-10 text-center">No {position}s found on this roster.</div>
-        )}
-        {status === "ok" && players.length > 0 && (
-          <div className="grid grid-cols-1 gap-2">
-            {players.map((p) => (
-              <button
-                key={p.id}
-                onClick={() =>
-                  onPick({
-                    position,
-                    id: p.id,
-                    fullName: p.fullName,
-                    teamId: team.id,
-                    teamAbbr: team.abbreviation,
-                    teamLogo: team.logos?.[0]?.href,
-                    headshot: p.headshot?.href,
-                    jersey: p.jersey,
-                  })
-                }
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-[#14181d] active:bg-[#1c2129] transition-colors text-left"
-              >
-                <Headshot src={p.headshot?.href} alt={p.fullName} name={p.fullName} size={40} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-[Inter] text-sm text-[#e8ecf1] truncate">{p.fullName}</div>
-                  <div className="font-[JetBrains_Mono] text-[10px] text-[#6b7482]">
-                    {position} {p.jersey ? `#${p.jersey}` : ""}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PickFlow({ position, onDone, onCancel }) {
-  const [team, setTeam] = useState(null);
-  if (position === "DEF") return <DefPickerList onPick={onDone} onBack={onCancel} />;
-  if (!team) return <TeamPickerList onPick={setTeam} onBack={onCancel} />;
-  return <PlayerPickerList team={team} position={position} onPick={onDone} onBack={() => setTeam(null)} />;
-}
-
-/* ---------------------------- DASHBOARD ---------------------------- */
-
 function WeeklyPicksDashboard() {
   const [state, setState] = useState(() => readPicksState());
   const [week, setWeek] = useState(null);
-  const [pickingPosition, setPickingPosition] = useState(null);
-  const [calcStatus, setCalcStatus] = useState("idle");
+  const [calcStatus, setCalcStatus] = useState("idle"); // idle | working | error
   const [calcError, setCalcError] = useState("");
+  const [progress, setProgress] = useState(null);
   const [expandedWeek, setExpandedWeek] = useState(null);
   const year = new Date().getFullYear();
 
@@ -839,55 +715,26 @@ function WeeklyPicksDashboard() {
       .catch(() => setWeek(1));
   }, []);
 
-  const savePick = (position, pick) => {
-    if (!week) return;
-    const next = {
-      ...state,
-      picksByWeek: { ...state.picksByWeek, [week]: { ...(state.picksByWeek[week] || {}), [position]: pick } },
-    };
-    setState(next);
-    writePicksState(next);
-    setPickingPosition(null);
-  };
-
   const calculateWeek = useCallback(async () => {
     if (!week) return;
-    const picks = state.picksByWeek[week] || {};
-    const positions = state.positions;
-    if (positions.some((p) => !picks[p])) {
-      setCalcStatus("error");
-      setCalcError("Fill in all 3 picks for this week first.");
-      return;
-    }
     setCalcStatus("working");
     setCalcError("");
+    setProgress(null);
     try {
-      const boxCache = {};
-      const breakdown = [];
-      for (const pos of positions) {
-        const pick = picks[pos];
-        const event = await findEventForTeam(pick.teamId, week, year);
-        if (!event) {
-          breakdown.push({ position: pos, name: pick.fullName, points: 0, detail: "No game this week" });
-          continue;
-        }
-        const started = event.status?.type?.state === "post" || event.status?.type?.state === "in";
-        if (!started) {
-          breakdown.push({ position: pos, name: pick.fullName, points: 0, detail: "Hasn't played yet" });
-          continue;
-        }
-        const plays = await getScoringPlays(event.id, boxCache);
-        const { points, detail } = scorePick(pick, plays);
-        breakdown.push({ position: pos, name: pick.fullName, points, detail });
-      }
-      const total = breakdown.reduce((s, b) => s + b.points, 0);
+      const entries = await computeLeagueWideScoring(week, year, (done, total) => setProgress({ done, total }));
+      const yourScore = Math.round(entries.filter((e) => state.positions.includes(e.position)).reduce((s, e) => s + e.points, 0) * 10) / 10;
+      const topScorers = [...entries].sort((a, b) => b.points - a.points).slice(0, 15);
       const teamScores = await getWeekTeamScores(week, year);
-      const beatCount = teamScores.filter((s) => total > s).length;
+      const beatCount = teamScores.filter((s) => yourScore > s).length;
       const totalTeams = teamScores.length;
       const passed = totalTeams > 0 ? beatCount > totalTeams / 2 : null;
+
       const next = {
         ...state,
-        log: { ...state.log, [week]: { total, breakdown, beatCount, totalTeams, passed, computedAt: Date.now() } },
+        log: {
+          ...state.log,
+          [week]: { total: yourScore, topScorers, beatCount, totalTeams, passed, computedAt: Date.now() },
+        },
         lastAutoDate: { ...state.lastAutoDate, [week]: todayKey() },
       };
       setState(next);
@@ -896,15 +743,15 @@ function WeeklyPicksDashboard() {
     } catch (e) {
       setCalcStatus("error");
       setCalcError(e.message || "Something went wrong");
+    } finally {
+      setProgress(null);
     }
-  }, [week, state, year]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week, state.positions, year]);
 
-  // auto-recalculate once per day for the current week, if picks are complete
+  // auto-recalculate once per day for the current week
   useEffect(() => {
     if (!week || state.positions.length !== 3) return;
-    const picks = state.picksByWeek[week] || {};
-    const complete = state.positions.every((p) => picks[p]);
-    if (!complete) return;
     if (state.lastAutoDate[week] === todayKey()) return;
     calculateWeek();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -913,12 +760,11 @@ function WeeklyPicksDashboard() {
   // gentle periodic refresh while the app stays open, for live-game days
   useEffect(() => {
     const id = setInterval(() => {
-      const picks = state.picksByWeek[week] || {};
-      if (week && state.positions.every((p) => picks[p])) calculateWeek();
+      if (week && state.positions.length === 3) calculateWeek();
     }, 3 * 60 * 60 * 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [week, state]);
+  }, [week, state.positions]);
 
   if (state.positions.length !== 3) {
     return (
@@ -933,18 +779,8 @@ function WeeklyPicksDashboard() {
     );
   }
 
-  if (pickingPosition) {
-    return (
-      <PickFlow
-        position={pickingPosition}
-        onCancel={() => setPickingPosition(null)}
-        onDone={(pick) => savePick(pickingPosition, pick)}
-      />
-    );
-  }
-
-  const picks = state.picksByWeek[week] || {};
   const weekNumbers = Object.keys(state.log).map(Number).sort((a, b) => b - a);
+  const current = state.log[week];
   const passedCount = weekNumbers.filter((w) => state.log[w].passed).length;
 
   return (
@@ -967,54 +803,79 @@ function WeeklyPicksDashboard() {
           {passedCount} of {weekNumbers.length} weeks beaten half the league
         </div>
 
-        <div className="mt-5 font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Week {week ?? "—"} Picks</div>
-        <div className="grid grid-cols-1 gap-2.5">
-          {state.positions.map((pos) => {
-            const p = picks[pos];
-            const opt = POSITION_OPTIONS.find((o) => o.key === pos);
-            return (
-              <div key={pos} className="rounded-xl bg-[#14181d] p-3 flex items-center gap-3">
-                <div className="w-16 shrink-0 font-[Inter] text-[10px] uppercase tracking-[0.15em] text-[#4c5563]">{opt.label}</div>
-                {p ? (
-                  <>
-                    {pos === "DEF" ? (
-                      <Logo src={p.teamLogo} alt={p.fullName} size={32} />
-                    ) : (
-                      <Headshot src={p.headshot} alt={p.fullName} name={p.fullName} size={32} />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-[Inter] text-sm text-[#e8ecf1] truncate">{p.fullName}</div>
-                      <div className="font-[JetBrains_Mono] text-[10px] text-[#6b7482]">{p.teamAbbr}</div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex-1 text-[#4c5563] font-[Inter] text-xs">No pick yet</div>
-                )}
-                <button
-                  onClick={() => setPickingPosition(pos)}
-                  className="shrink-0 px-3 py-1.5 rounded-lg bg-[#1c2129] text-[#c3c9d2] font-[Inter] text-[11px] font-medium active:scale-95 transition-transform"
-                >
-                  {p ? "Swap" : "Pick"}
-                </button>
-              </div>
-            );
-          })}
+        <div className="mt-4 flex gap-2">
+          {state.positions.map((pos) => (
+            <span key={pos} className="px-3 py-1.5 rounded-full bg-[#1c2129] text-[#F2A93B] font-[Inter] text-xs font-semibold">
+              {POSITION_OPTIONS.find((o) => o.key === pos)?.label}
+            </span>
+          ))}
         </div>
 
-        <div className="mt-6">
+        <div className="mt-5 rounded-xl bg-[#14181d] p-4 flex items-center justify-between">
+          <div>
+            <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563]">Week {week ?? "—"} Score</div>
+            <div className="font-[Teko] text-5xl text-[#e8ecf1] leading-none mt-1">{current ? current.total : "—"}</div>
+          </div>
+          {current?.passed != null && (
+            <span
+              className={`text-xs font-[Inter] font-semibold px-2.5 py-1 rounded-full ${
+                current.passed ? "bg-[#1f3a24] text-[#7fd88f]" : "bg-[#3a1f1f] text-[#e08a8a]"
+              }`}
+            >
+              {current.passed ? "PASSED" : "MISSED"}
+            </span>
+          )}
+        </div>
+        {current && (
+          <div className="mt-1.5 font-[Inter] text-[11px] text-[#6b7482]">
+            Beat {current.beatCount} of {current.totalTeams} teams this week
+          </div>
+        )}
+
+        <div className="mt-4">
           <button
             onClick={calculateWeek}
             disabled={calcStatus === "working" || !week}
             className="w-full py-3.5 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide disabled:opacity-40 active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
           >
             {calcStatus === "working" ? <Spinner size={16} /> : null}
-            {calcStatus === "working" ? "Calculating…" : `Refresh Week ${week ?? ""} Score`}
+            {calcStatus === "working"
+              ? progress
+                ? `Crunching stats… (${progress.done}/${progress.total} games)`
+                : "Crunching league-wide stats…"
+              : `Refresh Week ${week ?? ""} Score`}
           </button>
           {calcStatus === "error" && <div className="mt-2 font-[Inter] text-xs text-[#FF3D2E] text-center">{calcError}</div>}
           <div className="mt-2 font-[Inter] text-[11px] text-[#4c5563] text-center">
-            Scores itself once a day automatically · FG 3 · TD 6 · Pick-6 6 · Safety 2
+            Updates itself once a day · TD 6 · FG 3 · Pick-6 6 · Safety 2
           </div>
         </div>
+
+        {current?.topScorers?.length > 0 && (
+          <div className="mt-7">
+            <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Top Scorers This Week</div>
+            <div className="rounded-xl overflow-hidden bg-[#14181d]">
+              {current.topScorers.map((p, i) => (
+                <div
+                  key={`${p.teamAbbr}-${p.name}`}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 ${
+                    i !== current.topScorers.length - 1 ? "border-b border-[#1a1f26]" : ""
+                  } ${state.positions.includes(p.position) ? "bg-[#191d10]" : ""}`}
+                >
+                  <span className="font-[Teko] text-lg text-[#4c5563] w-5 text-center shrink-0">{i + 1}</span>
+                  <Headshot src={p.headshot} alt={p.name} name={p.name} size={34} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-[Inter] text-sm text-[#e8ecf1] truncate">{p.name}</div>
+                    <div className="font-[JetBrains_Mono] text-[10px] text-[#6b7482]">
+                      {p.teamAbbr} · {p.position} · {p.notes.join(", ")}
+                    </div>
+                  </div>
+                  <span className="font-[Teko] text-lg text-[#F2A93B] shrink-0">{p.points}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {weekNumbers.length > 0 && (
           <div className="mt-7">
@@ -1048,13 +909,14 @@ function WeeklyPicksDashboard() {
                         <div className="font-[Inter] text-[11px] text-[#6b7482] mb-1">
                           Beat {entry.beatCount} of {entry.totalTeams} teams that week
                         </div>
-                        {entry.breakdown.map((pl) => (
-                          <div key={pl.position} className="flex items-center justify-between gap-2">
+                        {entry.topScorers.slice(0, 5).map((p) => (
+                          <div key={`${p.teamAbbr}-${p.name}`} className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="font-[Inter] text-xs text-[#c3c9d2] truncate">{pl.name}</div>
-                              <div className="font-[Inter] text-[10px] text-[#4c5563] truncate">{pl.detail}</div>
+                              <div className="font-[Inter] text-xs text-[#c3c9d2] truncate">
+                                {p.name} <span className="text-[#4c5563]">· {p.position}</span>
+                              </div>
                             </div>
-                            <span className="font-[JetBrains_Mono] text-xs text-[#e8ecf1] shrink-0">{pl.points}</span>
+                            <span className="font-[JetBrains_Mono] text-xs text-[#e8ecf1] shrink-0">{p.points}</span>
                           </div>
                         ))}
                       </div>
@@ -1068,18 +930,6 @@ function WeeklyPicksDashboard() {
       </div>
     </div>
   );
-}
-
-async function findEventForTeam(teamId, week, year) {
-  const res = await fetch(`${BASE}/scoreboard?week=${week}&seasontype=2&year=${year}`);
-  if (!res.ok) throw new Error("schedule lookup failed");
-  const data = await res.json();
-  const events = data?.events || [];
-  for (const e of events) {
-    const competitors = e.competitions?.[0]?.competitors || [];
-    if (competitors.some((c) => String(c.team?.id) === String(teamId))) return e;
-  }
-  return null;
 }
 
 /* ---------------------------- APP SHELL ---------------------------- */
