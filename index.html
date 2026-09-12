@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r158/three.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
   html, body, #root { height: 100%; margin: 0; background: #0d0f13; }
@@ -95,6 +96,18 @@ function IconX({ size = 20, color = "currentColor" }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+function IconFootball({ size = 20, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12" cy="12" rx="9" ry="5.5" transform="rotate(-35 12 12)" />
+      <path d="M8.2 8.2l7.6 7.6" />
+      <path d="M9.6 6.8l1 1" />
+      <path d="M13.4 15.2l1 1" />
+      <path d="M7.2 9.2l1 1" />
+      <path d="M15.6 13.6l1 1" />
     </svg>
   );
 }
@@ -1160,6 +1173,306 @@ function WeeklyPicksDashboard() {
   );
 }
 
+/* ---------------------------- OPEN FIELD RUN (3D MINI-GAME) ---------------------------- */
+/*
+  A self-contained third-person endless runner built with three.js — no
+  network, no backend, nothing to sync. Juke between three lanes to dodge
+  defenders and rack up yards. Best distance is remembered on this device
+  (localStorage) only.
+*/
+
+const RUNNER_BEST_KEY = "rnfl_runner_best_yards";
+function readRunnerBest() {
+  try {
+    return Number(localStorage.getItem(RUNNER_BEST_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+function writeRunnerBest(n) {
+  try {
+    localStorage.setItem(RUNNER_BEST_KEY, String(n));
+  } catch {}
+}
+
+function RunnerGame() {
+  const mountRef = useRef(null);
+  const stateRef = useRef(null); // holds mutable game state across frames without re-rendering
+  const [phase, setPhase] = useState("ready"); // ready | playing | over
+  const [yards, setYards] = useState(0);
+  const [best, setBest] = useState(() => readRunnerBest());
+
+  const LANES = [-2.2, 0, 2.2];
+
+  const startGame = useCallback(() => {
+    const s = stateRef.current;
+    if (!s) return;
+    s.lane = 1;
+    s.targetX = LANES[1];
+    s.speed = 0.16;
+    s.distance = 0;
+    s.defenders.forEach((d) => s.scene.remove(d.mesh));
+    s.defenders.length = 0;
+    s.nextSpawnAt = 0;
+    s.player.position.set(0, s.player.position.y, 0);
+    s.gameOver = false;
+    setYards(0);
+    setPhase("playing");
+  }, []);
+
+  const moveLane = useCallback((dir) => {
+    const s = stateRef.current;
+    if (!s || s.gameOver) return;
+    s.lane = Math.max(0, Math.min(2, s.lane + dir));
+    s.targetX = LANES[s.lane];
+  }, []);
+
+  useEffect(() => {
+    if (!window.THREE || !mountRef.current) return;
+    const THREE = window.THREE;
+    const mount = mountRef.current;
+    const width = mount.clientWidth;
+    const height = mount.clientHeight;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d0f13);
+    scene.fog = new THREE.Fog(0x0d0f13, 8, 26);
+
+    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
+    camera.position.set(0, 3.2, 6);
+    camera.lookAt(0, 0.6, -6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223022, 0.9);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(3, 8, 4);
+    scene.add(dir);
+
+    // field
+    const fieldGeo = new THREE.PlaneGeometry(9, 200);
+    const fieldMat = new THREE.MeshStandardMaterial({ color: 0x1c3a24 });
+    const field = new THREE.Mesh(fieldGeo, fieldMat);
+    field.rotation.x = -Math.PI / 2;
+    field.position.z = -80;
+    scene.add(field);
+
+    // yard lines
+    const lineGroup = new THREE.Group();
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 });
+    for (let i = 0; i < 60; i++) {
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(9, 0.12), lineMat);
+      line.rotation.x = -Math.PI / 2;
+      line.position.set(0, 0.01, -i * 4);
+      lineGroup.add(line);
+    }
+    scene.add(lineGroup);
+
+    // side markers (sideline glow)
+    [-4.4, 4.4].forEach((x) => {
+      const side = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 200), new THREE.MeshBasicMaterial({ color: 0xf2a93b }));
+      side.rotation.x = -Math.PI / 2;
+      side.position.set(x, 0.02, -80);
+      scene.add(side);
+    });
+
+    // player (simple capsule-ish stack: sphere head + box body)
+    const player = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf2a93b });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.9, 12), bodyMat);
+    body.position.y = 0.55;
+    player.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 12), new THREE.MeshStandardMaterial({ color: 0xe8ecf1 }));
+    head.position.y = 1.15;
+    player.add(head);
+    player.position.set(0, 0, 0);
+    scene.add(player);
+
+    const defenderGeo = new THREE.CylinderGeometry(0.35, 0.4, 0.9, 12);
+    const defenderHeadGeo = new THREE.SphereGeometry(0.28, 12, 12);
+    const defenderMat = new THREE.MeshStandardMaterial({ color: 0xff3d2e });
+    const defenderHeadMat = new THREE.MeshStandardMaterial({ color: 0x1c2129 });
+
+    function spawnDefender(state) {
+      const group = new THREE.Group();
+      const b = new THREE.Mesh(defenderGeo, defenderMat);
+      b.position.y = 0.55;
+      group.add(b);
+      const h = new THREE.Mesh(defenderHeadGeo, defenderHeadMat);
+      h.position.y = 1.15;
+      group.add(h);
+      const lane = Math.floor(Math.random() * 3);
+      group.position.set(LANES[lane], 0, -40 - Math.random() * 10);
+      scene.add(group);
+      state.defenders.push({ mesh: group, lane });
+    }
+
+    const state = {
+      scene,
+      player,
+      lane: 1,
+      targetX: LANES[1],
+      speed: 0.16,
+      distance: 0,
+      defenders: [],
+      nextSpawnAt: 0,
+      gameOver: true,
+      tick: 0,
+    };
+    stateRef.current = state;
+
+    let rafId;
+    const clock = new THREE.Clock();
+
+    function animate() {
+      rafId = requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const st = stateRef.current;
+      if (!st) return;
+
+      // smooth lane change
+      player.position.x += (st.targetX - player.position.x) * Math.min(1, dt * 10);
+
+      if (!st.gameOver) {
+        st.speed = Math.min(0.42, st.speed + dt * 0.004);
+        st.distance += st.speed * dt * 60;
+        st.tick += dt;
+
+        // move field lines to simulate forward motion
+        lineGroup.children.forEach((l) => {
+          l.position.z += st.speed * dt * 60;
+          if (l.position.z > 8) l.position.z -= 240;
+        });
+
+        // spawn defenders periodically, faster over time
+        if (st.tick > st.nextSpawnAt) {
+          spawnDefender(st);
+          st.nextSpawnAt = st.tick + Math.max(0.45, 1.3 - st.speed * 1.5);
+        }
+
+        // advance defenders toward camera, check collision
+        for (let i = st.defenders.length - 1; i >= 0; i--) {
+          const d = st.defenders[i];
+          d.mesh.position.z += st.speed * dt * 60;
+          if (d.mesh.position.z > 6) {
+            scene.remove(d.mesh);
+            st.defenders.splice(i, 1);
+            continue;
+          }
+          const dx = Math.abs(d.mesh.position.x - player.position.x);
+          const dz = Math.abs(d.mesh.position.z - player.position.z);
+          if (dz < 0.6 && dx < 0.55) {
+            st.gameOver = true;
+            const finalYards = Math.floor(st.distance);
+            setYards(finalYards);
+            setBest((prevBest) => {
+              const nb = Math.max(prevBest, finalYards);
+              writeRunnerBest(nb);
+              return nb;
+            });
+            setPhase("over");
+          }
+        }
+
+        setYards((prev) => {
+          const fy = Math.floor(st.distance);
+          return fy !== prev ? fy : prev;
+        });
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    const onResize = () => {
+      const w = mount.clientWidth;
+      const h = mount.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener("resize", onResize);
+
+    const onKey = (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a") moveLane(-1);
+      if (e.key === "ArrowRight" || e.key === "d") moveLane(1);
+    };
+    window.addEventListener("keydown", onKey);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("keydown", onKey);
+      renderer.dispose();
+      fieldGeo.dispose();
+      fieldMat.dispose();
+      defenderGeo.dispose();
+      defenderHeadGeo.dispose();
+      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
+      stateRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-5 pt-6 pb-3">
+        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Open Field Run</h2>
+        <div className="flex items-center gap-1.5 text-[#F2A93B]">
+          <IconTrophy size={16} />
+          <span className="font-[JetBrains_Mono] text-sm">{best}</span>
+        </div>
+      </div>
+
+      <div className="relative flex-1 mx-5 mb-4 rounded-xl overflow-hidden bg-[#0d0f13]">
+        <div ref={mountRef} className="absolute inset-0" />
+
+        <div className="absolute top-3 left-0 right-0 flex justify-center pointer-events-none">
+          <div className="px-3 py-1 rounded-full bg-black/40 font-[Teko] text-2xl text-[#e8ecf1] tracking-wide">{yards} yds</div>
+        </div>
+
+        {phase !== "playing" && (
+          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-4 px-8 text-center">
+            {phase === "over" && (
+              <>
+                <div className="font-[Teko] text-4xl text-[#FF3D2E] leading-none">TACKLED!</div>
+                <div className="font-[Inter] text-sm text-[#c3c9d2]">{yards} yards this run</div>
+              </>
+            )}
+            {phase === "ready" && <div className="font-[Teko] text-3xl text-[#e8ecf1] leading-none">Ready to run?</div>}
+            <button
+              onClick={startGame}
+              className="px-6 py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform"
+            >
+              {phase === "over" ? "Run It Back" : "Start Running"}
+            </button>
+            <div className="font-[Inter] text-[11px] text-[#6b7482]">Arrow keys or tap the sides to juke</div>
+          </div>
+        )}
+
+        {phase === "playing" && (
+          <>
+            <button
+              onClick={() => moveLane(-1)}
+              className="absolute left-0 top-0 bottom-0 w-1/3 active:bg-white/5 transition-colors"
+              aria-label="Move left"
+            />
+            <button
+              onClick={() => moveLane(1)}
+              className="absolute right-0 top-0 bottom-0 w-1/3 active:bg-white/5 transition-colors"
+              aria-label="Move right"
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------------- APP SHELL ---------------------------- */
 
 function App() {
@@ -1180,6 +1493,7 @@ function App() {
         {tab === "games" && <Games />}
         {tab === "cfb" && <CFBGames />}
         {tab === "squad" && <WeeklyPicksDashboard />}
+        {tab === "run" && <RunnerGame />}
       </div>
 
       <div className="flex items-stretch border-t border-[#1a1f26] bg-[#0d0f13]">
@@ -1188,6 +1502,7 @@ function App() {
           { key: "games", label: "Games", Icon: IconCalendar },
           { key: "cfb", label: "CFB Games", Icon: IconCalendar },
           { key: "squad", label: "Weekly Picks", Icon: IconTrophy },
+          { key: "run", label: "Run Game", Icon: IconFootball },
         ].map(({ key, label, Icon }) => (
           <button key={key} onClick={() => setTab(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5">
             <Icon size={20} color={tab === key ? "#F2A93B" : "#5a6472"} />
