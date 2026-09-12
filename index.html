@@ -320,7 +320,7 @@ function GameDetail({ game, onBack }) {
 
 const CFB_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/college-football";
 
-function GamesGeneric({ base, weeksCount, extraParams = "", title = "Schedule" }) {
+function GamesGeneric({ base, weeksCount, extraParams = "", title = "Schedule", secondaryTab = null }) {
   const [week, setWeek] = useState(1);
   const [defaultWeekSet, setDefaultWeekSet] = useState(false);
   const cache = useRef({});
@@ -328,6 +328,7 @@ function GamesGeneric({ base, weeksCount, extraParams = "", title = "Schedule" }
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [view, setView] = useState("schedule"); // schedule | secondary
   const year = new Date().getFullYear();
 
   useEffect(() => {
@@ -380,88 +381,230 @@ function GamesGeneric({ base, weeksCount, extraParams = "", title = "Schedule" }
   return (
     <div className="flex flex-col h-full">
       <div className="px-5 pt-6 pb-3">
-        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none mb-4">{title}</h2>
-        <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5 no-scrollbar">
-          {Array.from({ length: weeksCount }, (_, i) => i + 1).map((w) => (
-            <button
-              key={w}
-              onClick={() => {
-                setWeek(w);
-                setSelectedId(null);
-              }}
-              className={`shrink-0 px-3.5 py-1.5 rounded-full font-[Inter] text-sm font-medium transition-colors ${
-                w === week ? "bg-[#F2A93B] text-[#12151b]" : "bg-[#1c2129] text-[#8b93a1] hover:text-[#c3c9d2]"
-              }`}
-            >
-              {w}
-            </button>
-          ))}
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">{view === "schedule" ? title : secondaryTab?.label}</h2>
+          {secondaryTab && (
+            <div className="flex gap-1 bg-[#1c2129] rounded-full p-1">
+              <button
+                onClick={() => setView("schedule")}
+                className={`px-3 py-1 rounded-full font-[Inter] text-xs font-medium transition-colors ${
+                  view === "schedule" ? "bg-[#F2A93B] text-[#12151b]" : "text-[#8b93a1]"
+                }`}
+              >
+                Schedule
+              </button>
+              <button
+                onClick={() => setView("secondary")}
+                className={`px-3 py-1 rounded-full font-[Inter] text-xs font-medium transition-colors ${
+                  view === "secondary" ? "bg-[#F2A93B] text-[#12151b]" : "text-[#8b93a1]"
+                }`}
+              >
+                {secondaryTab.label}
+              </button>
+            </div>
+          )}
         </div>
+        {view === "schedule" && (
+          <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5 no-scrollbar">
+            {Array.from({ length: weeksCount }, (_, i) => i + 1).map((w) => (
+              <button
+                key={w}
+                onClick={() => {
+                  setWeek(w);
+                  setSelectedId(null);
+                }}
+                className={`shrink-0 px-3.5 py-1.5 rounded-full font-[Inter] text-sm font-medium transition-colors ${
+                  w === week ? "bg-[#F2A93B] text-[#12151b]" : "bg-[#1c2129] text-[#8b93a1] hover:text-[#c3c9d2]"
+                }`}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 pb-6">
-        {status === "loading" && <LoadingBlock label={`Loading week ${week}…`} />}
-        {status === "error" && <ErrorBlock label="Couldn't load this week's games." onRetry={() => load(week)} />}
-        {status === "ok" && events.length === 0 && (
-          <div className="text-[#6b7482] font-[Inter] text-sm py-10 text-center">No games scheduled.</div>
-        )}
-        {status === "ok" &&
-          (() => {
-            let lastDate = "";
-            return events.map((e) => {
-              const c = e.competitions?.[0]?.competitors ?? [];
-              const away = c.find((x) => x.homeAway === "away");
-              const home = c.find((x) => x.homeAway === "home");
-              const isLive = e.status?.type?.state === "in";
-              const isFinal = e.status?.type?.completed;
-              const day = fmtDate(e.date);
-              const showHeader = day !== lastDate;
-              lastDate = day;
-              return (
-                <Fragment key={e.id}>
-                  {showHeader && (
-                    <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] pt-4 pb-2 first:pt-0">{day}</div>
-                  )}
-                  <button
-                    onClick={() => {
-                      setSelected(e);
-                      setSelectedId(e.id);
-                    }}
-                    className="w-full flex items-center justify-between py-3 border-b border-[#1a1f26] active:opacity-70 transition-opacity text-left"
-                  >
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <Logo src={away?.team?.logo} alt={away?.team?.abbreviation} size={28} />
-                      <span className="font-[Inter] text-sm text-[#c3c9d2] truncate">{away?.team?.shortDisplayName}</span>
+      {view === "secondary" ? (
+        <secondaryTab.Component />
+      ) : (
+        <div className="flex-1 overflow-y-auto px-5 pb-6">
+          {status === "loading" && <LoadingBlock label={`Loading week ${week}…`} />}
+          {status === "error" && <ErrorBlock label="Couldn't load this week's games." onRetry={() => load(week)} />}
+          {status === "ok" && events.length === 0 && (
+            <div className="text-[#6b7482] font-[Inter] text-sm py-10 text-center">No games scheduled.</div>
+          )}
+          {status === "ok" &&
+            (() => {
+              let lastDate = "";
+              return events.map((e) => {
+                const c = e.competitions?.[0]?.competitors ?? [];
+                const away = c.find((x) => x.homeAway === "away");
+                const home = c.find((x) => x.homeAway === "home");
+                const isLive = e.status?.type?.state === "in";
+                const isFinal = e.status?.type?.completed;
+                const day = fmtDate(e.date);
+                const showHeader = day !== lastDate;
+                lastDate = day;
+                return (
+                  <Fragment key={e.id}>
+                    {showHeader && (
+                      <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] pt-4 pb-2 first:pt-0">{day}</div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setSelected(e);
+                        setSelectedId(e.id);
+                      }}
+                      className="w-full flex items-center justify-between py-3 border-b border-[#1a1f26] active:opacity-70 transition-opacity text-left"
+                    >
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Logo src={away?.team?.logo} alt={away?.team?.abbreviation} size={28} />
+                        <span className="font-[Inter] text-sm text-[#c3c9d2] truncate">{away?.team?.shortDisplayName}</span>
+                      </div>
+                      <div className="flex flex-col items-center px-3 shrink-0">
+                        {isLive ? (
+                          <span className="font-[Teko] text-lg text-[#FF3D2E]">{away?.score}–{home?.score}</span>
+                        ) : isFinal ? (
+                          <span className="font-[Teko] text-lg text-[#e8ecf1]">{away?.score}–{home?.score}</span>
+                        ) : (
+                          <span className="font-[JetBrains_Mono] text-[11px] text-[#6b7482]">{fmtTime(e.date)}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+                        <span className="font-[Inter] text-sm text-[#c3c9d2] truncate text-right">{home?.team?.shortDisplayName}</span>
+                        <Logo src={home?.team?.logo} alt={home?.team?.abbreviation} size={28} />
+                      </div>
+                    </button>
+                  </Fragment>
+                );
+              });
+            })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NFLStandings() {
+  const [status, setStatus] = useState("loading");
+  const [conferences, setConferences] = useState([]);
+
+  const load = useCallback(() => {
+    setStatus("loading");
+    fetch("https://site.web.api.espn.com/apis/v2/sports/football/nfl/standings?level=3")
+      .then((r) => {
+        if (!r.ok) throw new Error("bad response");
+        return r.json();
+      })
+      .then((d) => {
+        setConferences(d?.children ?? []);
+        setStatus("ok");
+      })
+      .catch(() => setStatus("error"));
+  }, []);
+  useEffect(() => load(), [load]);
+
+  const statFor = (entry, type) => entry.stats?.find((s) => s.type === type)?.displayValue ?? "-";
+
+  return (
+    <div className="flex-1 overflow-y-auto px-5 pb-6">
+      {status === "loading" && <LoadingBlock label="Loading standings…" />}
+      {status === "error" && <ErrorBlock label="Couldn't load standings." onRetry={load} />}
+      {status === "ok" &&
+        conferences.map((conf) => (
+          <div key={conf.id} className="mb-6">
+            <div className="font-[Inter] text-xs uppercase tracking-[0.2em] text-[#6b7482] mb-2">{conf.name}</div>
+            {(conf.children ?? []).map((div) => (
+              <div key={div.id} className="mb-4">
+                <div className="font-[Inter] text-[11px] uppercase tracking-[0.15em] text-[#4c5563] mb-1.5">{div.name}</div>
+                <div className="rounded-xl overflow-hidden bg-[#14181d]">
+                  {(div.standings?.entries ?? []).map((entry, i, arr) => (
+                    <div
+                      key={entry.team.id}
+                      className={`flex items-center gap-2.5 px-3 py-2.5 ${i !== arr.length - 1 ? "border-b border-[#1a1f26]" : ""}`}
+                    >
+                      <Logo src={entry.team.logos?.[0]?.href} alt={entry.team.displayName} size={24} />
+                      <span className="font-[Inter] text-sm text-[#e8ecf1] flex-1 truncate">{entry.team.shortDisplayName}</span>
+                      <span className="font-[JetBrains_Mono] text-xs text-[#c3c9d2] w-14 text-right">
+                        {statFor(entry, "wins")}-{statFor(entry, "losses")}
+                      </span>
                     </div>
-                    <div className="flex flex-col items-center px-3 shrink-0">
-                      {isLive ? (
-                        <span className="font-[Teko] text-lg text-[#FF3D2E]">{away?.score}–{home?.score}</span>
-                      ) : isFinal ? (
-                        <span className="font-[Teko] text-lg text-[#e8ecf1]">{away?.score}–{home?.score}</span>
-                      ) : (
-                        <span className="font-[JetBrains_Mono] text-[11px] text-[#6b7482]">{fmtTime(e.date)}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
-                      <span className="font-[Inter] text-sm text-[#c3c9d2] truncate text-right">{home?.team?.shortDisplayName}</span>
-                      <Logo src={home?.team?.logo} alt={home?.team?.abbreviation} size={28} />
-                    </div>
-                  </button>
-                </Fragment>
-              );
-            });
-          })()}
-      </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function CFBRankings() {
+  const [status, setStatus] = useState("loading");
+  const [ranks, setRanks] = useState([]);
+
+  const load = useCallback(() => {
+    setStatus("loading");
+    fetch(`${CFB_BASE}/rankings`)
+      .then((r) => {
+        if (!r.ok) throw new Error("bad response");
+        return r.json();
+      })
+      .then((d) => {
+        const poll = (d?.rankings ?? []).find((r) => r.type === "ap") ?? d?.rankings?.[0];
+        setRanks(poll?.ranks ?? []);
+        setStatus("ok");
+      })
+      .catch(() => setStatus("error"));
+  }, []);
+  useEffect(() => load(), [load]);
+
+  return (
+    <div className="flex-1 overflow-y-auto px-5 pb-6">
+      {status === "loading" && <LoadingBlock label="Loading rankings…" />}
+      {status === "error" && <ErrorBlock label="Couldn't load rankings." onRetry={load} />}
+      {status === "ok" && (
+        <div className="rounded-xl overflow-hidden bg-[#14181d]">
+          {ranks.map((r, i) => (
+            <div
+              key={r.team.id}
+              className={`flex items-center gap-3 px-3.5 py-2.5 ${i !== ranks.length - 1 ? "border-b border-[#1a1f26]" : ""}`}
+            >
+              <span className="font-[Teko] text-xl text-[#F2A93B] w-6 text-center shrink-0">{r.current}</span>
+              <Logo src={r.team.logos?.[0]?.href} alt={r.team.location} size={28} />
+              <div className="flex-1 min-w-0">
+                <div className="font-[Inter] text-sm text-[#e8ecf1] truncate">
+                  {r.team.location} {r.team.name}
+                </div>
+                <div className="font-[JetBrains_Mono] text-[10px] text-[#6b7482]">{r.recordSummary ?? ""}</div>
+              </div>
+              {r.trend && r.trend !== "-" && (
+                <span className={`font-[JetBrains_Mono] text-xs shrink-0 ${r.trend.startsWith("+") ? "text-[#7fd88f]" : "text-[#e08a8a]"}`}>
+                  {r.trend}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function Games() {
-  return <GamesGeneric base={BASE} weeksCount={18} title="Schedule" />;
+  return <GamesGeneric base={BASE} weeksCount={18} title="Schedule" secondaryTab={{ label: "Standings", Component: NFLStandings }} />;
 }
 
 function CFBGames() {
-  return <GamesGeneric base={CFB_BASE} weeksCount={15} extraParams="&groups=80&limit=100" title="CFB Schedule" />;
+  return (
+    <GamesGeneric
+      base={CFB_BASE}
+      weeksCount={15}
+      extraParams="&groups=80&limit=100"
+      title="CFB Schedule"
+      secondaryTab={{ label: "Rankings", Component: CFBRankings }}
+    />
+  );
 }
 
 /* ---------------------------- WEEKLY PICKS ---------------------------- */
