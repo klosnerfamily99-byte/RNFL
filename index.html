@@ -81,6 +81,23 @@ function Spinner({ size = 28 }) {
     />
   );
 }
+function IconInfo({ size = 18, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  );
+}
+function IconX({ size = 20, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
 function IconTrophy({ size = 20, color = "currentColor" }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -301,7 +318,9 @@ function GameDetail({ game, onBack }) {
   );
 }
 
-function Games() {
+const CFB_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/college-football";
+
+function GamesGeneric({ base, weeksCount, extraParams = "", title = "Schedule" }) {
   const [week, setWeek] = useState(1);
   const [defaultWeekSet, setDefaultWeekSet] = useState(false);
   const cache = useRef({});
@@ -313,19 +332,20 @@ function Games() {
 
   useEffect(() => {
     if (defaultWeekSet) return;
-    fetch(`${BASE}/scoreboard`)
+    fetch(`${base}/scoreboard${extraParams}`)
       .then((r) => r.json())
       .then((d) => {
         setWeek(d?.week?.number ?? 1);
         setDefaultWeekSet(true);
       })
       .catch(() => setDefaultWeekSet(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultWeekSet]);
 
   const load = useCallback(
     (w, { silent } = {}) => {
       if (!silent) setStatus("loading");
-      fetch(`${BASE}/scoreboard?week=${w}&seasontype=2&year=${year}`)
+      fetch(`${base}/scoreboard?week=${w}&seasontype=2&year=${year}${extraParams}`)
         .then((r) => r.json())
         .then((d) => {
           const ev = d?.events ?? [];
@@ -337,7 +357,8 @@ function Games() {
           if (!silent) setStatus("error");
         });
     },
-    [year]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [year, base, extraParams]
   );
 
   useEffect(() => {
@@ -359,9 +380,9 @@ function Games() {
   return (
     <div className="flex flex-col h-full">
       <div className="px-5 pt-6 pb-3">
-        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none mb-4">Schedule</h2>
+        <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none mb-4">{title}</h2>
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-5 px-5 no-scrollbar">
-          {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+          {Array.from({ length: weeksCount }, (_, i) => i + 1).map((w) => (
             <button
               key={w}
               onClick={() => {
@@ -433,6 +454,14 @@ function Games() {
       </div>
     </div>
   );
+}
+
+function Games() {
+  return <GamesGeneric base={BASE} weeksCount={18} title="Schedule" />;
+}
+
+function CFBGames() {
+  return <GamesGeneric base={CFB_BASE} weeksCount={15} extraParams="&groups=80&limit=100" title="CFB Schedule" />;
 }
 
 /* ---------------------------- WEEKLY PICKS ---------------------------- */
@@ -699,6 +728,47 @@ function Headshot({ src, alt, name, size = 40 }) {
   );
 }
 
+function InfoModal({ onClose }) {
+  return (
+    <div className="absolute inset-0 z-20 bg-[#0d0f13]/95 backdrop-blur-sm flex flex-col">
+      <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-[#1a1f26]">
+        <h3 className="font-[Teko] text-2xl text-[#e8ecf1] leading-none">How Weekly Picks Works</h3>
+        <button onClick={onClose} className="p-1 text-[#c3c9d2]">
+          <IconX size={20} />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-5 font-[Inter] text-sm text-[#c3c9d2]">
+        <div>
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-1.5">1. Choose 3 Positions</div>
+          <p>Pick any 3 of: Quarterback, Running Back, Wide Receiver, Tight End, Kicker, Defense/Special Teams. No drafting individual players — you're backing the whole league at those positions.</p>
+        </div>
+        <div>
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-1.5">2. Scoring</div>
+          <ul className="list-disc pl-4 space-y-1">
+            <li>Touchdown — 6 pts</li>
+            <li>Field Goal — 3 pts</li>
+            <li>Pick-6 / return TD — 6 pts</li>
+            <li>Safety — 2 pts</li>
+          </ul>
+          <p className="mt-1.5">Every scoring play across every game that week counts, for every player in the league at your 3 chosen positions.</p>
+        </div>
+        <div>
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-1.5">3. Pass or Miss</div>
+          <p>Your weekly total is checked against every NFL team's real score that week. Beat more than half the league and the week is a PASS.</p>
+        </div>
+        <div>
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-1.5">4. Updates Itself</div>
+          <p>Your score recalculates automatically once a day, plus every few hours while the app is open — handy on game days. A manual refresh button is always there too.</p>
+        </div>
+        <div>
+          <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-1.5">Worth Knowing</div>
+          <p>This reads real public game data, but player positions and scoring attribution come from an undocumented public feed, so very rare misattributions are possible. Everything is stored only on this device — nothing is shared or synced anywhere.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WeeklyPicksDashboard() {
   const [state, setState] = useState(() => readPicksState());
   const [week, setWeek] = useState(null);
@@ -706,14 +776,23 @@ function WeeklyPicksDashboard() {
   const [calcError, setCalcError] = useState("");
   const [progress, setProgress] = useState(null);
   const [expandedWeek, setExpandedWeek] = useState(null);
+  const [showInfo, setShowInfo] = useState(false);
   const year = new Date().getFullYear();
 
-  useEffect(() => {
+  const refreshWeekNumber = useCallback(() => {
     fetch(`${BASE}/scoreboard`)
       .then((r) => r.json())
       .then((d) => setWeek(d?.week?.number ?? 1))
-      .catch(() => setWeek(1));
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    refreshWeekNumber();
+    // keep checking which week it actually is, so a long-open tab still
+    // notices the week changed even if nobody reloads the page
+    const id = setInterval(refreshWeekNumber, 30 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [refreshWeekNumber]);
 
   const calculateWeek = useCallback(async () => {
     if (!week) return;
@@ -784,10 +863,16 @@ function WeeklyPicksDashboard() {
   const passedCount = weekNumbers.filter((w) => state.log[w].passed).length;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
+      {showInfo && <InfoModal onClose={() => setShowInfo(false)} />}
       <div className="flex-1 overflow-y-auto px-5 pt-6 pb-8">
         <div className="flex items-center justify-between">
-          <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Weekly Picks</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-[Teko] text-4xl text-[#e8ecf1] leading-none">Weekly Picks</h2>
+            <button onClick={() => setShowInfo(true)} className="text-[#6b7482] active:scale-90 transition-transform">
+              <IconInfo size={18} />
+            </button>
+          </div>
           <button
             onClick={() => {
               const next = { ...state, positions: [] };
@@ -828,7 +913,7 @@ function WeeklyPicksDashboard() {
         </div>
         {current && (
           <div className="mt-1.5 font-[Inter] text-[11px] text-[#6b7482]">
-            Beat {current.beatCount} of {current.totalTeams} teams this week
+            Beat {current.beatCount} of {current.totalTeams} teams this week · updated {timeAgo(new Date(current.computedAt).toISOString())}
           </div>
         )}
 
@@ -950,6 +1035,7 @@ function App() {
       <div className="flex-1 min-h-0">
         {tab === "home" && <Home />}
         {tab === "games" && <Games />}
+        {tab === "cfb" && <CFBGames />}
         {tab === "squad" && <WeeklyPicksDashboard />}
       </div>
 
@@ -957,6 +1043,7 @@ function App() {
         {[
           { key: "home", label: "Home", Icon: IconHome },
           { key: "games", label: "Games", Icon: IconCalendar },
+          { key: "cfb", label: "CFB Games", Icon: IconCalendar },
           { key: "squad", label: "Weekly Picks", Icon: IconTrophy },
         ].map(({ key, label, Icon }) => (
           <button key={key} onClick={() => setTab(key)} className="flex-1 flex flex-col items-center gap-1 py-2.5">
