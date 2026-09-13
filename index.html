@@ -292,13 +292,6 @@ function GameDetail({ game, onBack }) {
   const isFinal = game.status?.type?.completed;
   const notStarted = game.status?.type?.state === "pre";
 
-  const watchHref =
-    game.links?.find((l) => (l.rel || []).includes("live"))?.href ||
-    game.links?.find((l) => (l.rel || []).includes("desktop"))?.href ||
-    game.links?.[0]?.href ||
-    null;
-  const network = game.competitions?.[0]?.broadcasts?.[0]?.names?.[0] || game.competitions?.[0]?.broadcast || null;
-
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-4 pt-5 pb-3">
@@ -329,18 +322,6 @@ function GameDetail({ game, onBack }) {
             <span className="font-[Inter] text-sm text-[#c3c9d2] text-center">{home?.team?.displayName}</span>
           </div>
         </div>
-
-        {watchHref && (
-          <a
-            href={watchHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-6 flex items-center gap-2 px-5 py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform"
-          >
-            {isLive ? "Watch Live" : isFinal ? "Watch Recap" : "Watch Coverage"}
-          </a>
-        )}
-        {network && <div className="mt-2 font-[Inter] text-[11px] text-[#6b7482]">Airing on {network}</div>}
       </div>
 
       <div className="px-6 pb-8 text-center">
@@ -1271,8 +1252,11 @@ function RunnerGame() {
     if (engineStatus !== "ready" || !mountRef.current) return;
     const THREE = window.THREE;
     const mount = mountRef.current;
-    const width = mount.clientWidth;
-    const height = mount.clientHeight;
+    // fall back to a sane portrait-ish size if the container hasn't been
+    // laid out yet — the ResizeObserver below corrects this the instant
+    // real dimensions are known, so this is just to avoid a 0/NaN camera
+    const width = mount.clientWidth || 360;
+    const height = mount.clientHeight || 500;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d0f13);
@@ -1432,14 +1416,25 @@ function RunnerGame() {
     }
     animate();
 
-    const onResize = () => {
-      const w = mount.clientWidth;
-      const h = mount.clientHeight;
+    const onResize = (w, h) => {
+      if (!w || !h) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
-    window.addEventListener("resize", onResize);
+    // Watching the container itself (not just window resize) is what
+    // actually fixes the "invisible until I rotate my phone" issue —
+    // mobile flex layouts can settle into their real size a moment after
+    // this effect first runs, and this catches that the instant it happens.
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width: w, height: h } = entry.contentRect;
+        onResize(w, h);
+      }
+    });
+    resizeObserver.observe(mount);
+    const onWindowResize = () => onResize(mount.clientWidth, mount.clientHeight);
+    window.addEventListener("resize", onWindowResize);
 
     const onKey = (e) => {
       if (e.key === "ArrowLeft" || e.key === "a") moveLane(-1);
@@ -1449,7 +1444,8 @@ function RunnerGame() {
 
     return () => {
       cancelAnimationFrame(rafId);
-      window.removeEventListener("resize", onResize);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", onWindowResize);
       window.removeEventListener("keydown", onKey);
       renderer.dispose();
       fieldGeo.dispose();
@@ -1472,7 +1468,7 @@ function RunnerGame() {
         </div>
       </div>
 
-      <div className="relative flex-1 mx-5 mb-4 rounded-xl overflow-hidden bg-[#0d0f13]">
+      <div className="relative flex-1 min-h-0 mx-5 mb-4 rounded-xl overflow-hidden bg-[#0d0f13]">
         <div ref={mountRef} className="absolute inset-0" />
 
         <div className="absolute top-3 left-0 right-0 flex justify-center pointer-events-none">
