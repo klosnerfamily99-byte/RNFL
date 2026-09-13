@@ -292,6 +292,13 @@ function GameDetail({ game, onBack }) {
   const isFinal = game.status?.type?.completed;
   const notStarted = game.status?.type?.state === "pre";
 
+  const watchHref =
+    game.links?.find((l) => (l.rel || []).includes("live"))?.href ||
+    game.links?.find((l) => (l.rel || []).includes("desktop"))?.href ||
+    game.links?.[0]?.href ||
+    null;
+  const network = game.competitions?.[0]?.broadcasts?.[0]?.names?.[0] || game.competitions?.[0]?.broadcast || null;
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-4 pt-5 pb-3">
@@ -322,6 +329,18 @@ function GameDetail({ game, onBack }) {
             <span className="font-[Inter] text-sm text-[#c3c9d2] text-center">{home?.team?.displayName}</span>
           </div>
         </div>
+
+        {watchHref && (
+          <a
+            href={watchHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-6 flex items-center gap-2 px-5 py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform"
+          >
+            {isLive ? "Watch Live" : isFinal ? "Watch Recap" : "Watch Coverage"}
+          </a>
+        )}
+        {network && <div className="mt-2 font-[Inter] text-[11px] text-[#6b7482]">Airing on {network}</div>}
       </div>
 
       <div className="px-6 pb-8 text-center">
@@ -1359,7 +1378,11 @@ function RunnerGame() {
       player.position.x += (st.targetX - player.position.x) * Math.min(1, dt * 10);
 
       if (!st.gameOver) {
-        st.speed = Math.min(0.42, st.speed + dt * 0.004);
+        // speed ramps with distance covered, not just time survived —
+        // the further you've run, the faster it gets, up to a hard cap
+        const BASE_SPEED = 0.16;
+        const MAX_SPEED = 0.62;
+        st.speed = Math.min(MAX_SPEED, BASE_SPEED + st.distance * 0.0022);
         st.distance += st.speed * dt * 60;
         st.tick += dt;
 
