@@ -8,7 +8,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r158/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
   html, body, #root { height: 100%; margin: 0; background: #0d0f13; }
@@ -1201,6 +1201,27 @@ function RunnerGame() {
   const [phase, setPhase] = useState("ready"); // ready | playing | over
   const [yards, setYards] = useState(0);
   const [best, setBest] = useState(() => readRunnerBest());
+  const [engineStatus, setEngineStatus] = useState(window.THREE ? "ready" : "loading"); // loading | ready | failed
+
+  useEffect(() => {
+    if (window.THREE) {
+      setEngineStatus("ready");
+      return;
+    }
+    let tries = 0;
+    const id = setInterval(() => {
+      tries++;
+      if (window.THREE) {
+        setEngineStatus("ready");
+        clearInterval(id);
+      } else if (tries > 50) {
+        // ~5s of polling with no luck
+        setEngineStatus("failed");
+        clearInterval(id);
+      }
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
 
   const LANES = [-2.2, 0, 2.2];
 
@@ -1228,7 +1249,7 @@ function RunnerGame() {
   }, []);
 
   useEffect(() => {
-    if (!window.THREE || !mountRef.current) return;
+    if (engineStatus !== "ready" || !mountRef.current) return;
     const THREE = window.THREE;
     const mount = mountRef.current;
     const width = mount.clientWidth;
@@ -1416,7 +1437,7 @@ function RunnerGame() {
       stateRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [engineStatus]);
 
   return (
     <div className="flex flex-col h-full">
@@ -1437,20 +1458,39 @@ function RunnerGame() {
 
         {phase !== "playing" && (
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-4 px-8 text-center">
-            {phase === "over" && (
+            {engineStatus === "loading" && (
               <>
-                <div className="font-[Teko] text-4xl text-[#FF3D2E] leading-none">TACKLED!</div>
-                <div className="font-[Inter] text-sm text-[#c3c9d2]">{yards} yards this run</div>
+                <Spinner size={28} />
+                <div className="font-[Inter] text-sm text-[#c3c9d2]">Loading the 3D engine…</div>
               </>
             )}
-            {phase === "ready" && <div className="font-[Teko] text-3xl text-[#e8ecf1] leading-none">Ready to run?</div>}
-            <button
-              onClick={startGame}
-              className="px-6 py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform"
-            >
-              {phase === "over" ? "Run It Back" : "Start Running"}
-            </button>
-            <div className="font-[Inter] text-[11px] text-[#6b7482]">Arrow keys or tap the sides to juke</div>
+            {engineStatus === "failed" && (
+              <>
+                <IconWarning size={28} color="#FF3D2E" />
+                <div className="font-[Teko] text-2xl text-[#e8ecf1] leading-none">Couldn't Load the Game</div>
+                <div className="font-[Inter] text-sm text-[#c3c9d2] max-w-xs">
+                  The 3D engine failed to load — check your connection and reload the page.
+                </div>
+              </>
+            )}
+            {engineStatus === "ready" && (
+              <>
+                {phase === "over" && (
+                  <>
+                    <div className="font-[Teko] text-4xl text-[#FF3D2E] leading-none">TACKLED!</div>
+                    <div className="font-[Inter] text-sm text-[#c3c9d2]">{yards} yards this run</div>
+                  </>
+                )}
+                {phase === "ready" && <div className="font-[Teko] text-3xl text-[#e8ecf1] leading-none">Ready to run?</div>}
+                <button
+                  onClick={startGame}
+                  className="px-6 py-3 rounded-xl bg-[#F2A93B] text-[#12151b] font-[Inter] text-sm font-semibold tracking-wide active:scale-[0.98] transition-transform"
+                >
+                  {phase === "over" ? "Run It Back" : "Start Running"}
+                </button>
+                <div className="font-[Inter] text-[11px] text-[#6b7482]">Arrow keys or tap the sides to juke</div>
+              </>
+            )}
           </div>
         )}
 
