@@ -382,24 +382,84 @@ async function fetchDefensePersonnel(teamId) {
   return [...dl.map((p) => ({ ...p, slot: "DL" })), ...lb.map((p) => ({ ...p, slot: "LB" })), ...db.map((p) => ({ ...p, slot: "DB" }))];
 }
 
-function PersonnelRow({ label, players, mark, color }) {
+function FieldDiagram({ yardsToEndzone, downDistanceText, offense, defense }) {
+  // yardsToEndzone: 0 = at the goal line ahead, 100 = at your own goal line.
+  // We show a 40-yard window centered on the ball so the formation reads clearly.
+  const y2e = Number.isFinite(yardsToEndzone) ? yardsToEndzone : 50;
+  const windowHalf = 20;
+  const top = Math.max(0, y2e - windowHalf);
+  const bottom = Math.min(100, y2e + windowHalf);
+  const span = bottom - top || 1;
+
+  const FIELD_TOP = 24;
+  const FIELD_BOTTOM = 356;
+  const FIELD_LEFT = 30;
+  const FIELD_RIGHT = 270;
+
+  const yFor = (yardVal) => FIELD_TOP + ((yardVal - top) / span) * (FIELD_BOTTOM - FIELD_TOP);
+  const losY = yFor(y2e);
+
+  const yardTicks = [];
+  for (let yd = Math.ceil(top / 10) * 10; yd <= bottom; yd += 10) {
+    yardTicks.push(yd);
+  }
+
+  const rowFor = (players, rowY) => {
+    const count = Math.max(players.length, 1);
+    return players.map((p, i) => ({
+      p,
+      x: FIELD_LEFT + ((i + 0.5) / count) * (FIELD_RIGHT - FIELD_LEFT),
+      y: rowY,
+    }));
+  };
+  const defenseDots = rowFor(defense, Math.max(FIELD_TOP + 14, losY - 22));
+  const offenseDots = rowFor(offense, Math.min(FIELD_BOTTOM - 14, losY + 22));
+
   return (
-    <div className="mb-3 last:mb-0">
-      <div className="font-[Inter] text-[10px] uppercase tracking-[0.15em] text-[#4c5563] mb-1.5">{label}</div>
-      <div className="flex flex-wrap gap-1.5">
-        {players.map((p) => (
-          <div key={p.id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#1c2129]">
-            <span className="font-[Teko] text-base leading-none" style={{ color }}>
-              {mark}
-            </span>
-            <span className="font-[Inter] text-[11px] text-[#c3c9d2] whitespace-nowrap">
-              {(p.fullName || "").split(" ").slice(-1)[0]}
-            </span>
-            <span className="font-[JetBrains_Mono] text-[9px] text-[#4c5563]">{p.slot}</span>
-          </div>
+    <div className="rounded-xl overflow-hidden bg-[#0f2916] relative">
+      <svg viewBox="0 0 300 380" className="w-full h-auto block">
+        <rect x={FIELD_LEFT} y={FIELD_TOP} width={FIELD_RIGHT - FIELD_LEFT} height={FIELD_BOTTOM - FIELD_TOP} fill="#123420" />
+        {yardTicks.map((yd) => (
+          <g key={yd}>
+            <line x1={FIELD_LEFT} x2={FIELD_RIGHT} y1={yFor(yd)} y2={yFor(yd)} stroke="#ffffff" strokeOpacity="0.25" strokeWidth="1" />
+            <text x={FIELD_LEFT - 6} y={yFor(yd) + 3} fill="#ffffff" fillOpacity="0.4" fontSize="8" textAnchor="end" fontFamily="JetBrains Mono, monospace">
+              {yd <= 50 ? yd : 100 - yd}
+            </text>
+          </g>
         ))}
-        {players.length === 0 && <span className="font-[Inter] text-[11px] text-[#4c5563]">Not available</span>}
-      </div>
+        {/* line of scrimmage */}
+        <line x1={FIELD_LEFT} x2={FIELD_RIGHT} y1={losY} y2={losY} stroke="#F2A93B" strokeWidth="2" />
+        {/* ball marker */}
+        <ellipse cx={(FIELD_LEFT + FIELD_RIGHT) / 2} cy={losY} rx="6" ry="4" fill="#e8ecf1" stroke="#12151b" strokeWidth="1" />
+
+        {defenseDots.map(({ p, x, y }) => (
+          <g key={`d-${p.id}`}>
+            <circle cx={x} cy={y} r="9" fill="#1c2129" stroke="#FF3D2E" strokeWidth="1.6" />
+            <text x={x} y={y + 3.5} fill="#FF3D2E" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="Teko, sans-serif">
+              X
+            </text>
+            <text x={x} y={y + 17} fill="#c3c9d2" fontSize="6.5" textAnchor="middle" fontFamily="Inter, sans-serif">
+              {(p.fullName || "").split(" ").slice(-1)[0]}
+            </text>
+          </g>
+        ))}
+        {offenseDots.map(({ p, x, y }) => (
+          <g key={`o-${p.id}`}>
+            <circle cx={x} cy={y} r="9" fill="#1c2129" stroke="#F2A93B" strokeWidth="1.6" />
+            <text x={x} y={y + 3.5} fill="#F2A93B" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="Teko, sans-serif">
+              O
+            </text>
+            <text x={x} y={y - 12} fill="#c3c9d2" fontSize="6.5" textAnchor="middle" fontFamily="Inter, sans-serif">
+              {(p.fullName || "").split(" ").slice(-1)[0]}
+            </text>
+          </g>
+        ))}
+      </svg>
+      {downDistanceText && (
+        <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-black/50 font-[Inter] text-[11px] text-[#e8ecf1]">
+          {downDistanceText}
+        </div>
+      )}
     </div>
   );
 }
@@ -407,6 +467,7 @@ function PersonnelRow({ label, players, mark, color }) {
 function PlayByPlay({ game, away, home }) {
   const [plays, setPlays] = useState([]);
   const [situationText, setSituationText] = useState("");
+  const [yardsToEndzone, setYardsToEndzone] = useState(50);
   const [status, setStatus] = useState("loading");
   const [offense, setOffense] = useState([]);
   const [defense, setDefense] = useState([]);
@@ -428,6 +489,8 @@ function PlayByPlay({ game, away, home }) {
 
           const last = allPlays[0];
           setSituationText(last?.end?.downDistanceText || last?.start?.downDistanceText || "");
+          const yte = last?.end?.yardsToEndzone ?? last?.start?.yardsToEndzone;
+          if (Number.isFinite(yte)) setYardsToEndzone(yte);
 
           // figure out who has the ball right now, defaulting to home
           // team on offense if no live situation is available
@@ -470,51 +533,22 @@ function PlayByPlay({ game, away, home }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, game.id]);
 
-  if (status === "loading") return <LoadingBlock label="Loading play-by-play…" />;
-  if (status === "error") return <ErrorBlock label="Couldn't load play-by-play." onRetry={() => load(false)} />;
+  if (status === "loading") return <LoadingBlock label="Loading the field…" />;
+  if (status === "error") return <ErrorBlock label="Couldn't load the field." onRetry={() => load(false)} />;
+
+  const latestPlay = plays[0];
 
   return (
     <div className="px-5 pb-8">
-      {situationText && (
-        <div className="mb-4 flex items-center gap-2">
-          {isLive && <span className="w-1.5 h-1.5 rounded-full bg-[#FF3D2E] animate-pulse shrink-0" />}
-          <span className="font-[Inter] text-sm text-[#e8ecf1]">{situationText}</span>
-        </div>
-      )}
-
-      <div className="rounded-xl bg-[#14181d] p-3.5 mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <span className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563]">On The Field</span>
-          <span className="font-[Inter] text-[10px] text-[#4c5563]">O = offense · X = defense</span>
-        </div>
-        {offense.length === 0 && defense.length === 0 ? (
-          <div className="font-[Inter] text-xs text-[#4c5563] py-2">Personnel isn't available for this matchup.</div>
-        ) : (
-          <>
-            <PersonnelRow label="Offense" players={offense} mark="O" color="#F2A93B" />
-            <PersonnelRow label="Defense" players={defense} mark="X" color="#FF3D2E" />
-          </>
-        )}
-        <div className="mt-2 font-[Inter] text-[10px] text-[#4c5563]">
-          Real rosters, shown by position group — not literal live positions (that data isn't public).
-        </div>
+      <div className="flex items-center gap-2 mb-2">
+        {isLive && <span className="w-1.5 h-1.5 rounded-full bg-[#FF3D2E] animate-pulse shrink-0" />}
+        <span className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#6b7482]">On The Field</span>
       </div>
 
-      <div className="font-[Inter] text-[11px] uppercase tracking-[0.2em] text-[#4c5563] mb-2">Live Plays</div>
-      {plays.length === 0 ? (
-        <div className="font-[Inter] text-sm text-[#6b7482] py-6 text-center">No plays logged yet.</div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {plays.map((p) => (
-            <div key={p.id} className="pb-3 border-b border-[#1a1f26] last:border-0">
-              <div className="font-[JetBrains_Mono] text-[10px] text-[#4c5563] mb-0.5">
-                {p.period?.number ? `Q${p.period.number}` : ""} {p.clock?.displayValue ?? ""}
-                {p.start?.downDistanceText ? ` · ${p.start.downDistanceText}` : ""}
-              </div>
-              <div className="font-[Inter] text-sm text-[#c3c9d2]">{p.text}</div>
-            </div>
-          ))}
-        </div>
+      <FieldDiagram yardsToEndzone={yardsToEndzone} downDistanceText={situationText} offense={offense} defense={defense} />
+
+      {latestPlay?.text && (
+        <div className="mt-3 font-[Inter] text-sm text-[#c3c9d2]">{latestPlay.text}</div>
       )}
     </div>
   );
