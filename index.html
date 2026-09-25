@@ -19,6 +19,14 @@
   @media (prefers-reduced-motion: reduce) { .marquee { animation: none; } }
   .spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* subtle idle motion so field players never look frozen between real
+     down/distance updates — purely cosmetic, not real tracked movement */
+  @keyframes idle-jitter-a { 0%,100% { transform: translate(0px, 0px); } 50% { transform: translate(1.2px, -1px); } }
+  @keyframes idle-jitter-b { 0%,100% { transform: translate(0px, 0px); } 50% { transform: translate(-1.3px, 1.1px); } }
+  @keyframes idle-jitter-c { 0%,100% { transform: translate(0px, 0px); } 50% { transform: translate(0.9px, 1.3px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .field-jitter-a, .field-jitter-b, .field-jitter-c { animation: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -457,24 +465,34 @@ function FieldDiagram({ yardsToEndzone, downDistanceText, offense, defense }) {
 
         {defenseDots.map(({ p, x, y }, i) => (
           <g key={`d-${p.id}`} style={{ transition: "transform 0.8s ease" }} transform={`translate(${x}, ${y})`}>
-            <circle r="9" fill="#1c2129" stroke="#FF3D2E" strokeWidth="1.6" />
-            <text y="3.5" fill="#FF3D2E" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="Teko, sans-serif">
-              X
-            </text>
-            <text y={i % 2 === 0 ? -14 : -23} fill="#c3c9d2" fontSize="6.5" textAnchor="middle" fontFamily="Inter, sans-serif">
-              {truncateName(lastNameOf(p.fullName))}
-            </text>
+            <g
+              className={`field-jitter-${["a", "b", "c"][i % 3]}`}
+              style={{ animation: `idle-jitter-${["a", "b", "c"][i % 3]} ${2.4 + (i % 5) * 0.3}s ease-in-out infinite`, animationDelay: `${(i % 4) * 0.4}s` }}
+            >
+              <circle r="9" fill="#1c2129" stroke="#FF3D2E" strokeWidth="1.6" />
+              <text y="3.5" fill="#FF3D2E" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="Teko, sans-serif">
+                X
+              </text>
+              <text y={i % 2 === 0 ? -14 : -23} fill="#c3c9d2" fontSize="6.5" textAnchor="middle" fontFamily="Inter, sans-serif">
+                {truncateName(lastNameOf(p.fullName))}
+              </text>
+            </g>
           </g>
         ))}
         {offenseDots.map(({ p, x, y }, i) => (
           <g key={`o-${p.id}`} style={{ transition: "transform 0.8s ease" }} transform={`translate(${x}, ${y})`}>
-            <circle r="9" fill="#1c2129" stroke="#F2A93B" strokeWidth="1.6" />
-            <text y="3.5" fill="#F2A93B" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="Teko, sans-serif">
-              O
-            </text>
-            <text y={i % 2 === 0 ? 17 : 26} fill="#c3c9d2" fontSize="6.5" textAnchor="middle" fontFamily="Inter, sans-serif">
-              {truncateName(lastNameOf(p.fullName))}
-            </text>
+            <g
+              className={`field-jitter-${["a", "b", "c"][i % 3]}`}
+              style={{ animation: `idle-jitter-${["a", "b", "c"][i % 3]} ${2.4 + (i % 5) * 0.3}s ease-in-out infinite`, animationDelay: `${(i % 4) * 0.4}s` }}
+            >
+              <circle r="9" fill="#1c2129" stroke="#F2A93B" strokeWidth="1.6" />
+              <text y="3.5" fill="#F2A93B" fontSize="9" textAnchor="middle" fontWeight="700" fontFamily="Teko, sans-serif">
+                O
+              </text>
+              <text y={i % 2 === 0 ? 17 : 26} fill="#c3c9d2" fontSize="6.5" textAnchor="middle" fontFamily="Inter, sans-serif">
+                {truncateName(lastNameOf(p.fullName))}
+              </text>
+            </g>
           </g>
         ))}
       </svg>
@@ -551,7 +569,7 @@ function PlayByPlay({ game, away, home }) {
 
   useEffect(() => {
     if (!isLive) return;
-    const id = setInterval(() => load(true), 15000);
+    const id = setInterval(() => load(true), 10000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive, game.id]);
